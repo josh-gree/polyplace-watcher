@@ -22,5 +22,9 @@ polyplace-contracts = { git = "https://github.com/josh-gree/polyplace-contracts.
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
     "web3>=7.15.0",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

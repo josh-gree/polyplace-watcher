@@ -15,7 +15,7 @@ def test_expires_at_is_utc() -> None:
 
 def test_color_unpacked() -> None:
     event = CellColorUpdated(cell_id=1, renter="0xabc", color=0xFF8800)
-    assert event.color == RGB(r=0xFF, g=0x88, b=0x00)
+    assert event.color == RGB(r=255, g=136, b=0)
 
 
 def test_color_black() -> None:
