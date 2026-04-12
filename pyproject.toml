@@ -7,8 +7,19 @@ authors = [
     { name = "josh-gree", email = "joshuadouglasgreenhalgh@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "polyplace-contracts",
+]
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+polyplace-contracts = { git = "https://github.com/josh-gree/polyplace-contracts.git", subdirectory = "packages/python" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "web3>=7.15.0",
+]
