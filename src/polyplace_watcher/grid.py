@@ -2,7 +2,7 @@ import math
 import struct
 from datetime import datetime, timezone
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from polyplace_watcher.events import GRID_SIZE, CellColorUpdated, CellRented, RGB
 
@@ -14,6 +14,11 @@ class Cell(BaseModel):
     expires_at: datetime | None = None
     color: RGB | None = None
 
+    @field_validator("renter")
+    @classmethod
+    def _lowercase_renter(cls, v: str | None) -> str | None:
+        return v.lower() if v is not None else None
+
 
 class Grid:
     def __init__(self) -> None:
@@ -23,12 +28,16 @@ class Grid:
         existing = self._cells.get(event.cell_id, Cell())
         match event:
             case CellRented():
-                self._cells[event.cell_id] = existing.model_copy(
-                    update={"renter": event.renter, "expires_at": event.expires_at}
+                self._cells[event.cell_id] = Cell(
+                    color=existing.color,
+                    renter=event.renter,
+                    expires_at=event.expires_at,
                 )
             case CellColorUpdated():
-                self._cells[event.cell_id] = existing.model_copy(
-                    update={"color": event.color}
+                self._cells[event.cell_id] = Cell(
+                    color=event.color,
+                    renter=existing.renter,
+                    expires_at=existing.expires_at,
                 )
 
     def get(self, cell_id: int) -> Cell | None:

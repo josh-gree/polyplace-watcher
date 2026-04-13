@@ -8,8 +8,10 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.135.3",
     "polyplace-contracts",
     "pydantic>=2.12.5",
+    "uvicorn>=0.44.0",
     "websockets>=12.0",
 ]
 
@@ -22,6 +24,7 @@ polyplace-contracts = { git = "https://github.com/josh-gree/polyplace-contracts.
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
     "web3>=7.15.0",

@@ -44,7 +44,7 @@ def test_backfill_populates_grid(w3: Web3, http_url: str, ws_url: str, deployed_
     cell_id = 10 * 1000 + 5
     cell = watcher.grid.get(cell_id)
     assert cell is not None
-    assert cell.renter == caller.address
+    assert cell.renter == caller.address.lower()
     assert cell.color == RGB(r=255, g=136, b=0)
 
 
@@ -341,5 +341,5 @@ async def test_watch_populates_grid(w3: Web3, http_url: str, ws_url: str, deploy
 
     cell = watcher.grid.get(cell_id)
     assert cell is not None
-    assert cell.renter == caller.address
+    assert cell.renter == caller.address.lower()
     assert cell.color == RGB(r=255, g=136, b=0)
