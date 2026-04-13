@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,8 @@ from web3 import Web3
 
 from polyplace_contracts import PLACE_FAUCET_ABI, PLACE_GRID_ABI, PLACE_TOKEN_ABI
 from polyplace_contracts.deploy import DEPLOY_RENT_PRICE, Deployment
-from polyplace_watcher.events import RGB
+from polyplace_watcher.events import CellColorUpdated, RGB
+import polyplace_watcher.watcher as watcher_module
 from polyplace_watcher.watcher import Watcher
 
 from conftest import _DEPLOYER_KEY, send_tx
@@ -110,6 +112,64 @@ def test_save_snapshot_raises_without_last_block(http_url: str, ws_url: str, dep
         watcher.save_snapshot(tmp_path / "snap.json")
 
 
+async def test_watch_catches_up_from_loaded_snapshot(
+    w3: Web3,
+    http_url: str,
+    ws_url: str,
+    deployed_contracts: Deployment,
+    tmp_path: Path,
+) -> None:
+    faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
+    token = w3.eth.contract(address=deployed_contracts.token, abi=PLACE_TOKEN_ABI)
+    grid = w3.eth.contract(address=deployed_contracts.grid, abi=PLACE_GRID_ABI)
+
+    send_tx(w3, faucet.functions.claim(), _DEPLOYER_KEY)
+    send_tx(w3, token.functions.approve(deployed_contracts.grid, DEPLOY_RENT_PRICE * 3), _DEPLOYER_KEY)
+
+    from_block = w3.eth.block_number
+    send_tx(w3, grid.functions.rentCell(1, 1, 0xFF0000), _DEPLOYER_KEY)
+
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
+    watcher.backfill(from_block)
+    snap_path = tmp_path / "snap.json"
+    watcher.save_snapshot(snap_path)
+
+    send_tx(w3, grid.functions.rentCell(2, 2, 0x00FF00), _DEPLOYER_KEY)
+
+    watcher2 = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
+    watcher2.load_snapshot(snap_path)
+    watch_task = asyncio.create_task(watcher2.watch())
+
+    try:
+        for _ in range(20):
+            await asyncio.sleep(0.1)
+            if watcher2._ws_w3 is not None:
+                break
+        else:
+            raise AssertionError("watch did not connect in time")
+
+        send_tx(w3, grid.functions.rentCell(3, 3, 0x0000FF), _DEPLOYER_KEY)
+        live_cell_id = 3 * 1000 + 3
+        for _ in range(20):
+            await asyncio.sleep(0.1)
+            if watcher2.grid.get(live_cell_id) is not None:
+                break
+        else:
+            raise AssertionError("watch did not pick up a live event after restart")
+
+        missed_cell_id = 2 * 1000 + 2
+        for _ in range(20):
+            await asyncio.sleep(0.1)
+            if watcher2.grid.get(missed_cell_id) is not None:
+                break
+        else:
+            raise AssertionError("watch did not catch up from the loaded snapshot block")
+    finally:
+        watch_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await watch_task
+
+
 async def test_watch_reconnects_after_disconnect(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     caller = Account.from_key(_DEPLOYER_KEY)
 
@@ -157,6 +217,78 @@ async def test_watch_reconnects_after_disconnect(w3: Web3, http_url: str, ws_url
     watch_task.cancel()
     assert watcher.grid.get(cell_id_1) is not None
     assert watcher.grid.get(cell_id_2) is not None
+
+
+async def test_watch_resubscribes_before_reconnect_backfill(
+    monkeypatch: pytest.MonkeyPatch,
+    http_url: str,
+    ws_url: str,
+    deployed_contracts: Deployment,
+) -> None:
+    state = {
+        "connection_count": 0,
+        "subscription_active": False,
+        "race_event_delivered": False,
+    }
+
+    class FakeEth:
+        async def subscribe(self, *_args: object, **_kwargs: object) -> None:
+            state["subscription_active"] = True
+
+    class FakeSocket:
+        def __init__(self, connection_id: int) -> None:
+            self.connection_id = connection_id
+
+        async def process_subscriptions(self):
+            if self.connection_id == 1:
+                yield {"result": {"blockNumber": 100, "cell_id": 1}}
+                raise watcher_module.PersistentConnectionError()
+
+            for _ in range(20):
+                await asyncio.sleep(0.01)
+                if state["race_event_delivered"]:
+                    yield {"result": {"blockNumber": 101, "cell_id": 2}}
+                    return
+
+    class FakeAsyncWeb3:
+        eth = FakeEth()
+
+        @staticmethod
+        def WebSocketProvider(url: str) -> str:
+            return url
+
+        def __init__(self, _provider: str) -> None:
+            state["connection_count"] += 1
+            self.socket = FakeSocket(state["connection_count"])
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            state["subscription_active"] = False
+
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
+    watcher._decode_log = lambda log: CellColorUpdated(cell_id=log["cell_id"], renter="0xabc", color=0x0000FF)  # type: ignore[method-assign]
+
+    def backfill(_from_block: int) -> None:
+        if state["subscription_active"]:
+            state["race_event_delivered"] = True
+
+    monkeypatch.setattr(watcher_module, "AsyncWeb3", FakeAsyncWeb3)
+    monkeypatch.setattr(watcher, "backfill", backfill)
+
+    watch_task = asyncio.create_task(watcher.watch())
+    try:
+        for _ in range(30):
+            await asyncio.sleep(0.05)
+            if watcher.grid.get(2) is not None:
+                break
+        else:
+            raise AssertionError("watch did not resubscribe before reconnect backfill")
+    finally:
+        watch_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await watch_task
 
 
 async def test_watch_populates_grid(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:

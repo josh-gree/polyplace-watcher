@@ -77,15 +77,16 @@ class Watcher:
                         "address": self._deployment.grid,
                         "topics": [[_CELL_RENTED_TOPIC, _CELL_COLOR_UPDATED_TOPIC]],
                     })
+                    if self._last_block is not None:
+                        self.backfill(self._last_block)
                     async for response in w3.socket.process_subscriptions():
-                        self._last_block = response["result"]["blockNumber"]
                         event = self._decode_log(response["result"])
                         if event is not None:
                             self.grid.apply(event)
+                            self._last_block = response["result"]["blockNumber"]
             except asyncio.CancelledError:
                 raise
             except (ConnectionClosed, PersistentConnectionError):
-                if self._last_block is not None:
-                    self.backfill(self._last_block)
+                pass
             finally:
                 self._ws_w3 = None
