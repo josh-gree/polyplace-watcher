@@ -1,11 +1,17 @@
+import asyncio
+from pathlib import Path
+
 from web3 import AsyncWeb3, Web3
+from web3.exceptions import PersistentConnectionError
 from web3.types import LogReceipt
+from websockets.exceptions import ConnectionClosed
 
 from polyplace_contracts import PLACE_GRID_ABI
 from polyplace_contracts.deploy import Deployment
 
 from polyplace_watcher.events import CellColorUpdated, CellRented
 from polyplace_watcher.grid import Grid
+from polyplace_watcher.snapshot import Snapshot
 
 
 def _event_topic(abi: list, name: str) -> bytes:
@@ -25,6 +31,8 @@ class Watcher:
         self._ws_url = ws_url
         self._contract = self._w3.eth.contract(address=deployment.grid, abi=PLACE_GRID_ABI)
         self._deployment = deployment
+        self._last_block: int | None = None
+        self._ws_w3: AsyncWeb3 | None = None
 
     def _decode_log(self, log: LogReceipt) -> CellRented | CellColorUpdated | None:
         topic = log["topics"][0]
@@ -44,17 +52,40 @@ class Watcher:
             "topics": [[_CELL_RENTED_TOPIC, _CELL_COLOR_UPDATED_TOPIC]],
         })
         for log in logs:
+            self._last_block = log["blockNumber"]
             event = self._decode_log(log)
             if event is not None:
                 self.grid.apply(event)
 
+    def save_snapshot(self, path: Path) -> None:
+        if self._last_block is None:
+            raise ValueError("No blocks processed yet; cannot save snapshot.")
+        snap = Snapshot(last_block=self._last_block, cells=dict(self.grid._cells))
+        path.write_text(snap.model_dump_json())
+
+    def load_snapshot(self, path: Path) -> None:
+        snap = Snapshot.model_validate_json(path.read_text())
+        self.grid._cells = snap.cells
+        self._last_block = snap.last_block
+
     async def watch(self) -> None:
-        async with AsyncWeb3(AsyncWeb3.WebSocketProvider(self._ws_url)) as w3:
-            await w3.eth.subscribe("logs", {
-                "address": self._deployment.grid,
-                "topics": [[_CELL_RENTED_TOPIC, _CELL_COLOR_UPDATED_TOPIC]],
-            })
-            async for response in w3.socket.process_subscriptions():
-                event = self._decode_log(response["result"])
-                if event is not None:
-                    self.grid.apply(event)
+        while True:
+            try:
+                async with AsyncWeb3(AsyncWeb3.WebSocketProvider(self._ws_url)) as w3:
+                    self._ws_w3 = w3
+                    await w3.eth.subscribe("logs", {
+                        "address": self._deployment.grid,
+                        "topics": [[_CELL_RENTED_TOPIC, _CELL_COLOR_UPDATED_TOPIC]],
+                    })
+                    async for response in w3.socket.process_subscriptions():
+                        self._last_block = response["result"]["blockNumber"]
+                        event = self._decode_log(response["result"])
+                        if event is not None:
+                            self.grid.apply(event)
+            except asyncio.CancelledError:
+                raise
+            except (ConnectionClosed, PersistentConnectionError):
+                if self._last_block is not None:
+                    self.backfill(self._last_block)
+            finally:
+                self._ws_w3 = None
