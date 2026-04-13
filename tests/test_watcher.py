@@ -79,6 +79,28 @@ def test_backfill_empty_does_not_change_last_block(w3: Web3, http_url: str, ws_u
     assert watcher._last_block == 5
 
 
+def test_backfill_does_not_advance_last_block_when_apply_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    http_url: str,
+    ws_url: str,
+    deployed_contracts: Deployment,
+) -> None:
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
+    watcher._last_block = 5
+    monkeypatch.setattr(watcher._w3.eth, "get_logs", lambda _filter: [{"blockNumber": 6}])
+    monkeypatch.setattr(
+        watcher,
+        "_decode_log",
+        lambda _log: CellColorUpdated(cell_id=0, renter="0xabc", color=0x0000FF),
+    )
+    monkeypatch.setattr(watcher.grid, "apply", lambda _event: (_ for _ in ()).throw(RuntimeError("apply failed")))
+
+    with pytest.raises(RuntimeError, match="apply failed"):
+        watcher.backfill(5)
+
+    assert watcher._last_block == 5
+
+
 def test_snapshot_round_trip(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment, tmp_path: Path) -> None:
     faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
     token = w3.eth.contract(address=deployed_contracts.token, abi=PLACE_TOKEN_ABI)

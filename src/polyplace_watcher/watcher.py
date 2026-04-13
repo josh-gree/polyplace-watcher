@@ -52,10 +52,10 @@ class Watcher:
             "topics": [[_CELL_RENTED_TOPIC, _CELL_COLOR_UPDATED_TOPIC]],
         })
         for log in logs:
-            self._last_block = log["blockNumber"]
             event = self._decode_log(log)
             if event is not None:
                 self.grid.apply(event)
+                self._last_block = log["blockNumber"]
 
     def save_snapshot(self, path: Path) -> None:
         if self._last_block is None:
