@@ -24,6 +24,17 @@ class Grid:
     def __init__(self) -> None:
         self._cells: dict[int, Cell] = {}
 
+    def clone(self) -> "Grid":
+        grid = Grid()
+        grid._cells = dict(self._cells)
+        return grid
+
+    def cells_snapshot(self) -> dict[int, Cell]:
+        return dict(self._cells)
+
+    def replace_cells(self, cells: dict[int, Cell]) -> None:
+        self._cells = dict(cells)
+
     def apply(self, event: CellRented | CellColorUpdated) -> None:
         existing = self._cells.get(event.cell_id, Cell())
         match event:
@@ -68,7 +79,7 @@ class Grid:
                 bitmap[cell_id >> 3] |= 1 << (cell_id & 7)
                 packed_colors += bytes([cell.color.r, cell.color.g, cell.color.b])
 
-        # Section 3: rental records — 9 bytes each, fixed size
+        # Section 3: rental records — 11 bytes each, fixed size
         rental_records = bytearray()
         n_rented = 0
         for cell_id, cell in sorted(self._cells.items()):
@@ -117,7 +128,7 @@ class Grid:
                 colors_by_cell[cell_id] = RGB(r=r, g=g, b=b)
                 color_pos += 3
 
-        # Section 3: rental records — 9 bytes each, at meta_offset
+        # Section 3: rental records — 11 bytes each, at meta_offset
         rentals_by_cell: dict[int, tuple[str, datetime]] = {}
         pos = meta_offset
         for _ in range(n_rented):

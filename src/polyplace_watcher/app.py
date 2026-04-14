@@ -63,13 +63,13 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/grid")
 async def get_grid(request: Request) -> Response:
     store: GridStore = request.app.state.store
-    etag = store.etag
+    etag, content = await store.compressed_snapshot()
 
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304)
 
     return Response(
-        content=await store.compressed_bytes(),
+        content=content,
         media_type="application/octet-stream",
         headers={"ETag": etag, "Cache-Control": "no-cache", "Content-Encoding": "gzip"},
     )

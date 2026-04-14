@@ -76,46 +76,77 @@ def test_apply_color_update() -> None:
     assert cell.color.b == 0
 
 
-# --- compressed_bytes ---
+# --- compressed_snapshot ---
 
 
-async def test_compressed_bytes_returns_valid_gzip() -> None:
+async def test_compressed_snapshot_returns_valid_gzip() -> None:
     store = GridStore()
     store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=1, log_index=0)
-    data = await store.compressed_bytes()
+    _, data = await store.compressed_snapshot()
     rt = Grid.from_bytes(gzip.decompress(data))
     assert rt.get(0) is not None
 
 
-async def test_compressed_bytes_on_empty_store() -> None:
+async def test_compressed_snapshot_on_empty_store() -> None:
     store = GridStore()
-    data = await store.compressed_bytes()
+    _, data = await store.compressed_snapshot()
     rt = Grid.from_bytes(gzip.decompress(data))
     assert rt._cells == {}
 
 
-async def test_compressed_bytes_cached_on_second_call() -> None:
+async def test_compressed_snapshot_cached_on_second_call() -> None:
     store = GridStore()
     store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=1, log_index=0)
-    first = await store.compressed_bytes()
-    second = await store.compressed_bytes()
+    _, first = await store.compressed_snapshot()
+    _, second = await store.compressed_snapshot()
     assert first is second
 
 
-async def test_compressed_bytes_invalidated_after_apply() -> None:
+async def test_compressed_snapshot_invalidated_after_apply() -> None:
     store = GridStore()
     store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=1, log_index=0)
-    first = await store.compressed_bytes()
+    _, first = await store.compressed_snapshot()
     store.apply(CellColorUpdated(cell_id=0, renter=ADDR_A, color=0xFF8800), block=1, log_index=1)
-    second = await store.compressed_bytes()
+    _, second = await store.compressed_snapshot()
     assert first is not second
 
 
-async def test_compressed_bytes_uses_to_thread(monkeypatch: pytest.MonkeyPatch) -> None:
-    to_thread_calls: list[object] = []
+async def test_compressed_snapshot_serializes_in_to_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    inside_to_thread = False
+    to_bytes_inside_to_thread: list[bool] = []
+    original_to_bytes = Grid.to_bytes
 
     async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
-        to_thread_calls.append(func)
+        nonlocal inside_to_thread
+        inside_to_thread = True
+        try:
+            if callable(func):
+                return func(*args, **kwargs)  # type: ignore[operator]
+        finally:
+            inside_to_thread = False
+
+    def tracked_to_bytes(self: Grid) -> bytes:
+        to_bytes_inside_to_thread.append(inside_to_thread)
+        return original_to_bytes(self)
+
+    monkeypatch.setattr(grid_store_module.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(Grid, "to_bytes", tracked_to_bytes)
+
+    store = GridStore()
+    store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=1, log_index=0)
+    await store.compressed_snapshot()
+
+    assert to_bytes_inside_to_thread == [True]
+
+
+async def test_compressed_snapshot_discards_stale_serialization(monkeypatch: pytest.MonkeyPatch) -> None:
+    mutated_during_serialization = False
+
+    async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
+        nonlocal mutated_during_serialization
+        if not mutated_during_serialization:
+            mutated_during_serialization = True
+            store.apply(CellRented(cell_id=1, renter=ADDR_A, expires_at=EXPIRES_AT), block=2, log_index=0)
         if callable(func):
             return func(*args, **kwargs)  # type: ignore[operator]
 
@@ -123,9 +154,13 @@ async def test_compressed_bytes_uses_to_thread(monkeypatch: pytest.MonkeyPatch) 
 
     store = GridStore()
     store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=1, log_index=0)
-    await store.compressed_bytes()
 
-    assert gzip.compress in to_thread_calls
+    etag, data = await store.compressed_snapshot()
+    rt = Grid.from_bytes(gzip.decompress(data))
+
+    assert etag == '"2.0"'
+    assert rt.get(0) is not None
+    assert rt.get(1) is not None
 
 
 # --- snapshot ---
@@ -167,7 +202,7 @@ async def test_load_snapshot_restores_cells(tmp_path: Path) -> None:
 async def test_load_snapshot_invalidates_compression_cache(tmp_path: Path) -> None:
     store = GridStore()
     store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=1, log_index=0)
-    await store.compressed_bytes()
+    await store.compressed_snapshot()
 
     writer = GridStore()
     writer.apply(CellRented(cell_id=5, renter=ADDR_A, expires_at=EXPIRES_AT), block=1, log_index=0)
@@ -175,7 +210,7 @@ async def test_load_snapshot_invalidates_compression_cache(tmp_path: Path) -> No
     await writer.save_snapshot(path)
 
     store.load_snapshot(path)
-    after = await store.compressed_bytes()
+    _, after = await store.compressed_snapshot()
     rt = Grid.from_bytes(gzip.decompress(after))
 
     assert rt.get(0) is None
@@ -191,6 +226,17 @@ async def test_snapshot_round_trip_preserves_last_block(tmp_path: Path) -> None:
     reader = GridStore()
     reader.load_snapshot(path)
     assert reader.last_block == 42
+
+
+async def test_snapshot_round_trip_preserves_last_log_index(tmp_path: Path) -> None:
+    writer = GridStore()
+    writer.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=42, log_index=3)
+    path = tmp_path / "snap.json"
+    await writer.save_snapshot(path)
+
+    reader = GridStore()
+    reader.load_snapshot(path)
+    assert reader.last_log_index == 3
 
 
 async def test_save_snapshot_captures_state_on_event_loop(tmp_path: Path) -> None:
