@@ -420,6 +420,64 @@ async def test_watch_backfills_from_last_block_on_reconnect(
     assert state["backfill_from_block"] == 100
 
 
+async def test_watch_backfill_called_via_to_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    http_url: str,
+    ws_url: str,
+    deployed_contracts: Deployment,
+) -> None:
+    to_thread_calls: list[object] = []
+
+    class FakeEth:
+        async def subscribe(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+    class FakeSocket:
+        async def process_subscriptions(self):
+            await asyncio.sleep(10_000)  # block until cancelled; avoids tight loop
+            return
+            yield  # make it an async generator
+
+    class FakeAsyncWeb3:
+        eth = FakeEth()
+
+        @staticmethod
+        def WebSocketProvider(url: str) -> str:
+            return url
+
+        def __init__(self, _provider: str) -> None:
+            self.socket = FakeSocket()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+    def fake_backfill(_from_block: int) -> None:
+        pass
+
+    async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
+        to_thread_calls.append(func)
+        if callable(func):
+            return func(*args, **kwargs)  # type: ignore[operator]
+
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
+    monkeypatch.setattr(watcher_module, "AsyncWeb3", FakeAsyncWeb3)
+    monkeypatch.setattr(watcher, "backfill", fake_backfill)
+    monkeypatch.setattr(watcher_module.asyncio, "to_thread", fake_to_thread)
+
+    watch_task = asyncio.create_task(watcher.watch())
+    try:
+        await asyncio.sleep(0.1)
+    finally:
+        watch_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await watch_task
+
+    assert fake_backfill in to_thread_calls
+
+
 async def test_watch_populates_grid(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     caller = Account.from_key(_DEPLOYER_KEY)
 

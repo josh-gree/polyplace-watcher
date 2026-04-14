@@ -79,7 +79,7 @@ async def get_grid(request: Request) -> Response:
         return Response(status_code=304)
 
     if cache.last_block != last_block or cache.last_log_index != last_log_index:
-        cache.data = gzip.compress(watcher.grid.to_bytes(), compresslevel=1)
+        cache.data = await asyncio.to_thread(gzip.compress, watcher.grid.to_bytes(), compresslevel=1)
         cache.last_block = last_block
         cache.last_log_index = last_log_index
 

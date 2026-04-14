@@ -80,7 +80,7 @@ class Watcher:
                         "address": self._deployment.grid,
                         "topics": [[_CELL_RENTED_TOPIC, _CELL_COLOR_UPDATED_TOPIC]],
                     })
-                    self.backfill(self._last_block if self._last_block is not None else self._start_block)
+                    await asyncio.to_thread(self.backfill, self._last_block if self._last_block is not None else self._start_block)
                     async for response in w3.socket.process_subscriptions():
                         event = self._decode_log(response["result"])
                         if event is not None:

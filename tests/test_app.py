@@ -131,6 +131,27 @@ async def test_get_grid_no_last_block_returns_empty_grid(
     assert rt._cells == {}
 
 
+async def test_get_grid_compresses_via_to_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    populated_grid_client: AsyncClient,
+) -> None:
+    import gzip as gzip_module
+
+    to_thread_calls: list[object] = []
+
+    async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
+        to_thread_calls.append(func)
+        if callable(func):
+            return func(*args, **kwargs)  # type: ignore[operator]
+
+    monkeypatch.setattr(app_module.asyncio, "to_thread", fake_to_thread)
+
+    async with populated_grid_client as client:
+        await client.get("/grid")
+
+    assert gzip_module.compress in to_thread_calls
+
+
 # --- _watcher_from_env ---
 
 
