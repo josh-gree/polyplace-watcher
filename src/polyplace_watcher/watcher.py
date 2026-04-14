@@ -32,6 +32,7 @@ class Watcher:
         self._contract = self._w3.eth.contract(address=deployment.grid, abi=PLACE_GRID_ABI)
         self._deployment = deployment
         self._last_block: int | None = None
+        self._last_log_index: int | None = None
         self._ws_w3: AsyncWeb3 | None = None
 
     def _decode_log(self, log: LogReceipt) -> CellRented | CellColorUpdated | None:
@@ -56,6 +57,7 @@ class Watcher:
             if event is not None:
                 self.grid.apply(event)
                 self._last_block = log["blockNumber"]
+                self._last_log_index = log["logIndex"]
 
     def save_snapshot(self, path: Path) -> None:
         if self._last_block is None:
@@ -84,6 +86,7 @@ class Watcher:
                         if event is not None:
                             self.grid.apply(event)
                             self._last_block = response["result"]["blockNumber"]
+                            self._last_log_index = response["result"]["logIndex"]
             except asyncio.CancelledError:
                 raise
             except (ConnectionClosed, PersistentConnectionError):

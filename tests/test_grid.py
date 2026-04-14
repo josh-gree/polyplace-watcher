@@ -160,3 +160,36 @@ def test_roundtrip_high_cell_id() -> None:
 def test_roundtrip_bad_magic_raises() -> None:
     with pytest.raises(ValueError, match="bad magic"):
         Grid.from_bytes(b"NOPE" + b"\x00" * 100)
+
+
+# --- idempotency ---
+
+
+def test_cell_rented_applied_twice_is_idempotent() -> None:
+    grid = Grid()
+    event = CellRented(cell_id=0, renter=RENTER, expires_at=EXPIRES_AT)
+    grid.apply(event)
+    cell_after_first = grid.get(0)
+    grid.apply(event)
+    assert grid.get(0) == cell_after_first
+
+
+def test_cell_color_updated_applied_twice_is_idempotent() -> None:
+    grid = Grid()
+    event = CellColorUpdated(cell_id=0, renter=RENTER, color=0xFF8800)
+    grid.apply(event)
+    cell_after_first = grid.get(0)
+    grid.apply(event)
+    assert grid.get(0) == cell_after_first
+
+
+def test_rented_then_color_updated_replayed_is_idempotent() -> None:
+    grid = Grid()
+    rent = CellRented(cell_id=0, renter=RENTER, expires_at=EXPIRES_AT)
+    color = CellColorUpdated(cell_id=0, renter=RENTER, color=0xFF8800)
+    grid.apply(rent)
+    grid.apply(color)
+    cell_after_first_pass = grid.get(0)
+    grid.apply(rent)
+    grid.apply(color)
+    assert grid.get(0) == cell_after_first_pass

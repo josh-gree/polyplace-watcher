@@ -263,13 +263,13 @@ async def test_watch_resubscribes_before_reconnect_backfill(
 
         async def process_subscriptions(self):
             if self.connection_id == 1:
-                yield {"result": {"blockNumber": 100, "cell_id": 1}}
+                yield {"result": {"blockNumber": 100, "logIndex": 0, "cell_id": 1}}
                 raise watcher_module.PersistentConnectionError()
 
             for _ in range(20):
                 await asyncio.sleep(0.01)
                 if state["race_event_delivered"]:
-                    yield {"result": {"blockNumber": 101, "cell_id": 2}}
+                    yield {"result": {"blockNumber": 101, "logIndex": 0, "cell_id": 2}}
                     return
 
     class FakeAsyncWeb3:

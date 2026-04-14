@@ -15,17 +15,18 @@ ADDR_A = "0x" + "ab" * 20
 EXPIRES_AT = 1712345678
 
 
-def _make_client(grid: Grid, last_block: int | None) -> AsyncClient:
+def _make_client(grid: Grid, last_block: int | None, last_log_index: int | None = None) -> AsyncClient:
     """Return a test client with app.state pre-populated, bypassing lifespan."""
-    app.state.watcher = _FakeWatcher(grid, last_block)
+    app.state.watcher = _FakeWatcher(grid, last_block, last_log_index)
     app.state.grid_cache = _GridCache()
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
 class _FakeWatcher:
-    def __init__(self, grid: Grid, last_block: int | None) -> None:
+    def __init__(self, grid: Grid, last_block: int | None, last_log_index: int | None = None) -> None:
         self.grid = grid
         self._last_block = last_block
+        self._last_log_index = last_log_index
 
 
 @pytest.fixture
@@ -38,7 +39,7 @@ def populated_grid_client() -> AsyncClient:
     grid = Grid()
     grid.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT))
     grid.apply(CellColorUpdated(cell_id=0, renter=ADDR_A, color=0xFF8800))
-    return _make_client(grid, last_block=42)
+    return _make_client(grid, last_block=42, last_log_index=5)
 
 
 async def test_get_grid_returns_200(populated_grid_client: AsyncClient) -> None:
@@ -69,19 +70,19 @@ async def test_get_grid_body_is_valid_binary(populated_grid_client: AsyncClient)
 async def test_get_grid_etag_matches_last_block(populated_grid_client: AsyncClient) -> None:
     async with populated_grid_client as client:
         response = await client.get("/grid")
-    assert response.headers["etag"] == '"42"'
+    assert response.headers["etag"] == '"42.5"'
 
 
 async def test_get_grid_304_on_matching_etag(populated_grid_client: AsyncClient) -> None:
     async with populated_grid_client as client:
-        response = await client.get("/grid", headers={"if-none-match": '"42"'})
+        response = await client.get("/grid", headers={"if-none-match": '"42.5"'})
     assert response.status_code == 304
     assert response.content == b""
 
 
 async def test_get_grid_200_on_stale_etag(populated_grid_client: AsyncClient) -> None:
     async with populated_grid_client as client:
-        response = await client.get("/grid", headers={"if-none-match": '"41"'})
+        response = await client.get("/grid", headers={"if-none-match": '"41.5"'})
     assert response.status_code == 200
 
 
@@ -93,6 +94,7 @@ async def test_get_grid_cache_not_recomputed_between_requests(
         r2 = await client.get("/grid")
     assert r1.content == r2.content
     assert app.state.grid_cache.last_block == 42
+    assert app.state.grid_cache.last_log_index == 5
 
 
 async def test_get_grid_no_last_block_returns_empty_grid(

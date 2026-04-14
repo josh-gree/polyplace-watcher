@@ -15,6 +15,7 @@ from polyplace_watcher.watcher import Watcher
 @dataclass
 class _GridCache:
     last_block: int = -1
+    last_log_index: int = -1
     data: bytes = field(default_factory=bytes)
 
 
@@ -70,14 +71,16 @@ async def get_grid(request: Request) -> Response:
     cache: _GridCache = request.app.state.grid_cache
 
     last_block = watcher._last_block
-    etag = f'"{last_block}"'
+    last_log_index = watcher._last_log_index
+    etag = f'"{last_block}.{last_log_index}"'
 
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304)
 
-    if cache.last_block != last_block:
+    if cache.last_block != last_block or cache.last_log_index != last_log_index:
         cache.data = gzip.compress(watcher.grid.to_bytes(), compresslevel=1)
         cache.last_block = last_block
+        cache.last_log_index = last_log_index
 
     return Response(
         content=cache.data,
