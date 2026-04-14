@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -8,7 +9,10 @@ from fastapi import FastAPI, Request, Response
 
 from polyplace_contracts.deploy import Deployment
 from polyplace_watcher.grid_store import GridStore
+from polyplace_watcher.observability import configure_logging
 from polyplace_watcher.watcher import Watcher
+
+logger = logging.getLogger(__name__)
 
 
 def _watcher_from_env(store: GridStore) -> Watcher:
@@ -25,21 +29,51 @@ def _watcher_from_env(store: GridStore) -> Watcher:
 
 async def _snapshot_loop(store: GridStore, path: Path, interval: int) -> None:
     last_saved_etag: str | None = None
+    logger.info(
+        "snapshot_loop_started",
+        extra={"component": "snapshot", "snapshot_path": path, "snapshot_interval_seconds": interval},
+    )
     while True:
         await asyncio.sleep(interval)
         etag = store.etag
         if store.last_block is not None and etag != last_saved_etag:
+            logger.info(
+                "snapshot_saving",
+                extra={
+                    "component": "snapshot",
+                    "snapshot_path": path,
+                    "etag": etag,
+                    "last_block": store.last_block,
+                    "last_log_index": store.last_log_index,
+                },
+            )
             await store.save_snapshot(path)
             last_saved_etag = etag
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    configure_logging()
     store = GridStore()
     snapshot_path = Path(os.environ.get("SNAPSHOT_PATH", "snapshot.json"))
     snapshot_interval = int(os.environ.get("SNAPSHOT_INTERVAL", "60"))
 
+    logger.info(
+        "service_config_loaded",
+        extra={
+            "component": "app",
+            "config": {
+                "SNAPSHOT_PATH": snapshot_path,
+                "SNAPSHOT_INTERVAL": snapshot_interval,
+            },
+        },
+    )
+
     if snapshot_path.exists():
+        logger.info(
+            "snapshot_loading",
+            extra={"component": "snapshot", "snapshot_path": snapshot_path},
+        )
         store.load_snapshot(snapshot_path)
 
     watcher = _watcher_from_env(store)
@@ -50,11 +84,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         yield
     finally:
+        logger.info("service_stopping", extra={"component": "app"})
         watch_task.cancel()
         snapshot_task.cancel()
         await asyncio.gather(watch_task, snapshot_task, return_exceptions=True)
         if store.last_block is not None:
             await store.save_snapshot(snapshot_path)
+        logger.info("service_stopped", extra={"component": "app"})
 
 
 app = FastAPI(lifespan=lifespan)
@@ -66,8 +102,27 @@ async def get_grid(request: Request) -> Response:
     etag, content = await store.compressed_snapshot()
 
     if request.headers.get("if-none-match") == etag:
+        logger.debug(
+            "grid_response_not_modified",
+            extra={
+                "component": "api",
+                "path": "/grid",
+                "status_code": 304,
+                "etag": etag,
+            },
+        )
         return Response(status_code=304)
 
+    logger.debug(
+        "grid_response_returned",
+        extra={
+            "component": "api",
+            "path": "/grid",
+            "status_code": 200,
+            "etag": etag,
+            "byte_count": len(content),
+        },
+    )
     return Response(
         content=content,
         media_type="application/octet-stream",

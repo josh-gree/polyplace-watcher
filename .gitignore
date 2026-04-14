@@ -11,3 +11,6 @@ wheels/
 
 # VSCode
 .vscode/
+
+# Runtime logs
+logs/
