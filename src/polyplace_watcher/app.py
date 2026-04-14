@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     watch_task = asyncio.create_task(watcher.watch())
     snapshot_task = asyncio.create_task(_snapshot_loop(store, snapshot_path, snapshot_interval))
     app.state.store = store
+    app.state.watcher = watcher
     try:
         yield
     finally:

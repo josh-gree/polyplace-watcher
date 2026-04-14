@@ -48,6 +48,7 @@ async def test_e2e_grid_endpoint(
     send_tx(w3, token.functions.approve(deployed_contracts.grid, DEPLOY_RENT_PRICE * 2), _DEPLOYER_KEY)
 
     async with lifespan(app):
+        store = app.state.store
         watcher = app.state.watcher
 
         await _wait_for(
@@ -67,7 +68,7 @@ async def test_e2e_grid_endpoint(
             send_tx(w3, grid_contract.functions.rentCell(5, 10, 0xFF8800), _DEPLOYER_KEY)
 
             await _wait_for(
-                lambda: watcher.grid.get(cell_id_1) is not None,
+                lambda: store.get(cell_id_1) is not None,
                 msg="watcher did not pick up first transaction",
             )
 
@@ -88,7 +89,7 @@ async def test_e2e_grid_endpoint(
             send_tx(w3, grid_contract.functions.rentCell(1, 1, 0x112233), _DEPLOYER_KEY)
 
             await _wait_for(
-                lambda: watcher.grid.get(cell_id_2) is not None,
+                lambda: store.get(cell_id_2) is not None,
                 msg="watcher did not pick up second transaction",
             )
 
