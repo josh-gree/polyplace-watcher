@@ -131,17 +131,17 @@ async def test_compressed_bytes_uses_to_thread(monkeypatch: pytest.MonkeyPatch) 
 # --- snapshot ---
 
 
-def test_save_snapshot_raises_without_last_block(tmp_path: Path) -> None:
+async def test_save_snapshot_raises_without_last_block(tmp_path: Path) -> None:
     store = GridStore()
     with pytest.raises(ValueError):
-        store.save_snapshot(tmp_path / "snap.json")
+        await store.save_snapshot(tmp_path / "snap.json")
 
 
-def test_save_snapshot_writes_file(tmp_path: Path) -> None:
+async def test_save_snapshot_writes_file(tmp_path: Path) -> None:
     store = GridStore()
     store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=10, log_index=0)
     path = tmp_path / "snap.json"
-    store.save_snapshot(path)
+    await store.save_snapshot(path)
     assert path.exists()
 
 
@@ -153,23 +153,51 @@ def test_load_snapshot_restores_last_block(tmp_path: Path) -> None:
     assert store.last_block == 99
 
 
-def test_load_snapshot_restores_cells(tmp_path: Path) -> None:
+async def test_load_snapshot_restores_cells(tmp_path: Path) -> None:
     writer = GridStore()
     writer.apply(CellRented(cell_id=7, renter=ADDR_A, expires_at=EXPIRES_AT), block=5, log_index=0)
     path = tmp_path / "snap.json"
-    writer.save_snapshot(path)
+    await writer.save_snapshot(path)
 
     reader = GridStore()
     reader.load_snapshot(path)
     assert reader.get(7) == writer.get(7)
 
 
-def test_snapshot_round_trip_preserves_last_block(tmp_path: Path) -> None:
+async def test_snapshot_round_trip_preserves_last_block(tmp_path: Path) -> None:
     writer = GridStore()
     writer.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=42, log_index=3)
     path = tmp_path / "snap.json"
-    writer.save_snapshot(path)
+    await writer.save_snapshot(path)
 
     reader = GridStore()
     reader.load_snapshot(path)
     assert reader.last_block == 42
+
+
+async def test_save_snapshot_captures_state_on_event_loop(tmp_path: Path) -> None:
+    """Snapshot must reflect state at call time, not at I/O time."""
+    store = GridStore()
+    store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=1, log_index=0)
+    path = tmp_path / "snap.json"
+
+    write_calls: list[object] = []
+
+    async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
+        # mutate the store before the write happens — should not affect snapshot
+        store.apply(CellRented(cell_id=1, renter=ADDR_A, expires_at=EXPIRES_AT), block=2, log_index=0)
+        write_calls.append(func)
+        if callable(func):
+            return func(*args, **kwargs)  # type: ignore[operator]
+
+    import polyplace_watcher.grid_store as grid_store_module
+    original = grid_store_module.asyncio.to_thread
+    grid_store_module.asyncio.to_thread = fake_to_thread  # type: ignore[assignment]
+    try:
+        await store.save_snapshot(path)
+    finally:
+        grid_store_module.asyncio.to_thread = original
+
+    snap = Snapshot.model_validate_json(path.read_text())
+    assert snap.last_block == 1
+    assert 1 not in snap.cells

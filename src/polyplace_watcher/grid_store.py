@@ -44,11 +44,11 @@ class GridStore:
             self._cache_key = key
         return self._cache_bytes
 
-    def save_snapshot(self, path: Path) -> None:
+    async def save_snapshot(self, path: Path) -> None:
         if self._last_block is None:
             raise ValueError("No blocks processed yet; cannot save snapshot.")
         snap = Snapshot(last_block=self._last_block, cells=dict(self._grid._cells))
-        path.write_text(snap.model_dump_json())
+        await asyncio.to_thread(lambda: path.write_text(snap.model_dump_json()))
 
     def load_snapshot(self, path: Path) -> None:
         snap = Snapshot.model_validate_json(path.read_text())

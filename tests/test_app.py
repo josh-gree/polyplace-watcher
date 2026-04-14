@@ -174,7 +174,12 @@ async def test_snapshot_loop_skips_when_nothing_changed(tmp_path: Path) -> None:
 
     save_calls: list[Path] = []
     original_save = store.save_snapshot
-    store.save_snapshot = lambda p: (save_calls.append(p), original_save(p))  # type: ignore[method-assign]
+
+    async def tracked_save(p: Path) -> None:
+        save_calls.append(p)
+        await original_save(p)
+
+    store.save_snapshot = tracked_save  # type: ignore[method-assign]
 
     task = asyncio.create_task(_snapshot_loop(store, path, interval=0))
     await asyncio.sleep(0.1)
@@ -183,31 +188,6 @@ async def test_snapshot_loop_skips_when_nothing_changed(tmp_path: Path) -> None:
         await task
 
     assert len(save_calls) == 1
-
-
-async def test_snapshot_loop_uses_to_thread(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    to_thread_calls: list[object] = []
-
-    async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
-        to_thread_calls.append(func)
-        if callable(func):
-            return func(*args, **kwargs)  # type: ignore[operator]
-
-    monkeypatch.setattr(app_module.asyncio, "to_thread", fake_to_thread)
-
-    store = GridStore()
-    store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=42, log_index=0)
-    path = tmp_path / "snap.json"
-
-    task = asyncio.create_task(_snapshot_loop(store, path, interval=0))
-    await asyncio.sleep(0.05)
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
-
-    assert store.save_snapshot in to_thread_calls
 
 
 # --- lifespan snapshot behaviour ---

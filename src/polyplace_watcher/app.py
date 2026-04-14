@@ -29,7 +29,7 @@ async def _snapshot_loop(store: GridStore, path: Path, interval: int) -> None:
         await asyncio.sleep(interval)
         etag = store.etag
         if store.last_block is not None and etag != last_saved_etag:
-            await asyncio.to_thread(store.save_snapshot, path)
+            await store.save_snapshot(path)
             last_saved_etag = etag
 
 
@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         snapshot_task.cancel()
         await asyncio.gather(watch_task, snapshot_task, return_exceptions=True)
         if store.last_block is not None:
-            store.save_snapshot(snapshot_path)
+            await store.save_snapshot(snapshot_path)
 
 
 app = FastAPI(lifespan=lifespan)

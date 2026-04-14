@@ -83,7 +83,7 @@ def test_fetch_logs_empty_does_not_change_last_block(w3: Web3, http_url: str, ws
     assert watcher.store.last_block == 5
 
 
-def test_snapshot_round_trip(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment, tmp_path: Path) -> None:
+async def test_snapshot_round_trip(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment, tmp_path: Path) -> None:
     faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
     token = w3.eth.contract(address=deployed_contracts.token, abi=PLACE_TOKEN_ABI)
     grid = w3.eth.contract(address=deployed_contracts.grid, abi=PLACE_GRID_ABI)
@@ -99,7 +99,7 @@ def test_snapshot_round_trip(w3: Web3, http_url: str, ws_url: str, deployed_cont
         watcher.store.apply(event, block, log_index)
 
     snap_path = tmp_path / "snap.json"
-    watcher.store.save_snapshot(snap_path)
+    await watcher.store.save_snapshot(snap_path)
 
     cell_id = 4 * 1000 + 3
     watcher2 = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
@@ -111,10 +111,10 @@ def test_snapshot_round_trip(w3: Web3, http_url: str, ws_url: str, deployed_cont
     assert watcher2.store.get(cell_id) == watcher.store.get(cell_id)
 
 
-def test_save_snapshot_raises_without_last_block(http_url: str, ws_url: str, deployed_contracts: Deployment, tmp_path: Path) -> None:
+async def test_save_snapshot_raises_without_last_block(http_url: str, ws_url: str, deployed_contracts: Deployment, tmp_path: Path) -> None:
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
     with pytest.raises(ValueError):
-        watcher.store.save_snapshot(tmp_path / "snap.json")
+        await watcher.store.save_snapshot(tmp_path / "snap.json")
 
 
 async def test_watch_catches_up_from_loaded_snapshot(
@@ -138,7 +138,7 @@ async def test_watch_catches_up_from_loaded_snapshot(
     for event, block, log_index in watcher.fetch_logs(from_block):
         watcher.store.apply(event, block, log_index)
     snap_path = tmp_path / "snap.json"
-    watcher.store.save_snapshot(snap_path)
+    await watcher.store.save_snapshot(snap_path)
 
     send_tx(w3, grid.functions.rentCell(2, 2, 0x00FF00), _DEPLOYER_KEY)
 
