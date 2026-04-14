@@ -1,25 +1,17 @@
 import asyncio
-import gzip
 import os
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request, Response
 
 from polyplace_contracts.deploy import Deployment
+from polyplace_watcher.grid_store import GridStore
 from polyplace_watcher.watcher import Watcher
 
 
-@dataclass
-class _GridCache:
-    last_block: int = -1
-    last_log_index: int = -1
-    data: bytes = field(default_factory=bytes)
-
-
-def _watcher_from_env() -> Watcher:
+def _watcher_from_env(store: GridStore) -> Watcher:
     http_url = os.environ["WEB3_HTTP_URL"]
     ws_url = os.environ["WEB3_WS_URL"]
     start_block = int(os.environ["START_BLOCK"])
@@ -28,39 +20,40 @@ def _watcher_from_env() -> Watcher:
         token=os.environ["TOKEN_ADDRESS"],
         faucet=os.environ["FAUCET_ADDRESS"],
     )
-    return Watcher(http_url=http_url, ws_url=ws_url, deployment=deployment, start_block=start_block)
+    return Watcher(http_url=http_url, ws_url=ws_url, deployment=deployment, start_block=start_block, store=store)
 
 
-async def _snapshot_loop(watcher: Watcher, path: Path, interval: int) -> None:
+async def _snapshot_loop(store: GridStore, path: Path, interval: int) -> None:
+    last_saved_etag: str | None = None
     while True:
         await asyncio.sleep(interval)
-        if watcher._last_block is not None:
-            watcher.save_snapshot(path)
+        etag = store.etag
+        if store.last_block is not None and etag != last_saved_etag:
+            await asyncio.to_thread(store.save_snapshot, path)
+            last_saved_etag = etag
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    watcher = _watcher_from_env()
+    store = GridStore()
     snapshot_path = Path(os.environ.get("SNAPSHOT_PATH", "snapshot.json"))
     snapshot_interval = int(os.environ.get("SNAPSHOT_INTERVAL", "60"))
 
     if snapshot_path.exists():
-        watcher.load_snapshot(snapshot_path)
+        store.load_snapshot(snapshot_path)
 
+    watcher = _watcher_from_env(store)
     watch_task = asyncio.create_task(watcher.watch())
-    snapshot_task = asyncio.create_task(
-        _snapshot_loop(watcher, snapshot_path, snapshot_interval)
-    )
-    app.state.watcher = watcher
-    app.state.grid_cache = _GridCache()
+    snapshot_task = asyncio.create_task(_snapshot_loop(store, snapshot_path, snapshot_interval))
+    app.state.store = store
     try:
         yield
     finally:
         watch_task.cancel()
         snapshot_task.cancel()
         await asyncio.gather(watch_task, snapshot_task, return_exceptions=True)
-        if watcher._last_block is not None:
-            watcher.save_snapshot(snapshot_path)
+        if store.last_block is not None:
+            store.save_snapshot(snapshot_path)
 
 
 app = FastAPI(lifespan=lifespan)
@@ -68,27 +61,14 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/grid")
 async def get_grid(request: Request) -> Response:
-    watcher: Watcher = request.app.state.watcher
-    cache: _GridCache = request.app.state.grid_cache
-
-    last_block = watcher._last_block
-    last_log_index = watcher._last_log_index
-    etag = f'"{last_block}.{last_log_index}"'
+    store: GridStore = request.app.state.store
+    etag = store.etag
 
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304)
 
-    if cache.last_block != last_block or cache.last_log_index != last_log_index:
-        cache.data = await asyncio.to_thread(gzip.compress, watcher.grid.to_bytes(), compresslevel=1)
-        cache.last_block = last_block
-        cache.last_log_index = last_log_index
-
     return Response(
-        content=cache.data,
+        content=await store.compressed_bytes(),
         media_type="application/octet-stream",
-        headers={
-            "ETag": etag,
-            "Cache-Control": "no-cache",
-            "Content-Encoding": "gzip",
-        },
+        headers={"ETag": etag, "Cache-Control": "no-cache", "Content-Encoding": "gzip"},
     )

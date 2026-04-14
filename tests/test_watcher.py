@@ -17,15 +17,15 @@ from conftest import _DEPLOYER_KEY, send_tx
 
 def test_watcher_instantiation(http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
-    assert watcher.grid is not None
+    assert watcher.store is not None
 
 
-def test_watcher_grid_initially_empty(http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
+def test_watcher_store_initially_empty(http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
-    assert watcher.grid.get(0) is None
+    assert watcher.store.get(0) is None
 
 
-def test_backfill_populates_grid(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
+def test_fetch_logs_populates_store(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     caller = Account.from_key(_DEPLOYER_KEY)
 
     faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
@@ -39,23 +39,25 @@ def test_backfill_populates_grid(w3: Web3, http_url: str, ws_url: str, deployed_
     send_tx(w3, grid.functions.rentCell(5, 10, 0xFF8800), _DEPLOYER_KEY)
 
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
-    watcher.backfill(from_block)
+    for event, block, log_index in watcher.fetch_logs(from_block):
+        watcher.store.apply(event, block, log_index)
 
     cell_id = 10 * 1000 + 5
-    cell = watcher.grid.get(cell_id)
+    cell = watcher.store.get(cell_id)
     assert cell is not None
     assert cell.renter == caller.address.lower()
     assert cell.color == RGB(r=255, g=136, b=0)
 
 
-def test_backfill_empty_range_leaves_grid_empty(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
+def test_fetch_logs_empty_range_leaves_store_empty(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     from_block = w3.eth.block_number
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
-    watcher.backfill(from_block)
-    assert watcher.grid.get(0) is None
+    for event, block, log_index in watcher.fetch_logs(from_block):
+        watcher.store.apply(event, block, log_index)
+    assert watcher.store.get(0) is None
 
 
-def test_backfill_sets_last_block(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
+def test_fetch_logs_sets_last_block(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
     token = w3.eth.contract(address=deployed_contracts.token, abi=PLACE_TOKEN_ABI)
     grid = w3.eth.contract(address=deployed_contracts.grid, abi=PLACE_GRID_ABI)
@@ -67,38 +69,18 @@ def test_backfill_sets_last_block(w3: Web3, http_url: str, ws_url: str, deployed
     receipt = send_tx(w3, grid.functions.rentCell(1, 1, 0xFF0000), _DEPLOYER_KEY)
 
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
-    assert watcher._last_block is None
-    watcher.backfill(from_block)
-    assert watcher._last_block == receipt["blockNumber"]
+    assert watcher.store.last_block is None
+    for event, block, log_index in watcher.fetch_logs(from_block):
+        watcher.store.apply(event, block, log_index)
+    assert watcher.store.last_block == receipt["blockNumber"]
 
 
-def test_backfill_empty_does_not_change_last_block(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
+def test_fetch_logs_empty_does_not_change_last_block(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
-    watcher._last_block = 5
-    watcher.backfill(w3.eth.block_number)
-    assert watcher._last_block == 5
-
-
-def test_backfill_does_not_advance_last_block_when_apply_fails(
-    monkeypatch: pytest.MonkeyPatch,
-    http_url: str,
-    ws_url: str,
-    deployed_contracts: Deployment,
-) -> None:
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
-    watcher._last_block = 5
-    monkeypatch.setattr(watcher._w3.eth, "get_logs", lambda _filter: [{"blockNumber": 6}])
-    monkeypatch.setattr(
-        watcher,
-        "_decode_log",
-        lambda _log: CellColorUpdated(cell_id=0, renter="0xabc", color=0x0000FF),
-    )
-    monkeypatch.setattr(watcher.grid, "apply", lambda _event: (_ for _ in ()).throw(RuntimeError("apply failed")))
-
-    with pytest.raises(RuntimeError, match="apply failed"):
-        watcher.backfill(5)
-
-    assert watcher._last_block == 5
+    watcher.store._last_block = 5
+    for event, block, log_index in watcher.fetch_logs(w3.eth.block_number):
+        watcher.store.apply(event, block, log_index)
+    assert watcher.store.last_block == 5
 
 
 def test_snapshot_round_trip(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment, tmp_path: Path) -> None:
@@ -113,25 +95,26 @@ def test_snapshot_round_trip(w3: Web3, http_url: str, ws_url: str, deployed_cont
     send_tx(w3, grid.functions.rentCell(3, 4, 0x112233), _DEPLOYER_KEY)
 
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
-    watcher.backfill(from_block)
+    for event, block, log_index in watcher.fetch_logs(from_block):
+        watcher.store.apply(event, block, log_index)
 
     snap_path = tmp_path / "snap.json"
-    watcher.save_snapshot(snap_path)
+    watcher.store.save_snapshot(snap_path)
 
     cell_id = 4 * 1000 + 3
     watcher2 = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
-    assert watcher2.grid.get(cell_id) is None
-    assert watcher2._last_block is None
+    assert watcher2.store.get(cell_id) is None
+    assert watcher2.store.last_block is None
 
-    watcher2.load_snapshot(snap_path)
-    assert watcher2._last_block == watcher._last_block
-    assert watcher2.grid.get(cell_id) == watcher.grid.get(cell_id)
+    watcher2.store.load_snapshot(snap_path)
+    assert watcher2.store.last_block == watcher.store.last_block
+    assert watcher2.store.get(cell_id) == watcher.store.get(cell_id)
 
 
 def test_save_snapshot_raises_without_last_block(http_url: str, ws_url: str, deployed_contracts: Deployment, tmp_path: Path) -> None:
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
     with pytest.raises(ValueError):
-        watcher.save_snapshot(tmp_path / "snap.json")
+        watcher.store.save_snapshot(tmp_path / "snap.json")
 
 
 async def test_watch_catches_up_from_loaded_snapshot(
@@ -152,14 +135,15 @@ async def test_watch_catches_up_from_loaded_snapshot(
     send_tx(w3, grid.functions.rentCell(1, 1, 0xFF0000), _DEPLOYER_KEY)
 
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
-    watcher.backfill(from_block)
+    for event, block, log_index in watcher.fetch_logs(from_block):
+        watcher.store.apply(event, block, log_index)
     snap_path = tmp_path / "snap.json"
-    watcher.save_snapshot(snap_path)
+    watcher.store.save_snapshot(snap_path)
 
     send_tx(w3, grid.functions.rentCell(2, 2, 0x00FF00), _DEPLOYER_KEY)
 
     watcher2 = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
-    watcher2.load_snapshot(snap_path)
+    watcher2.store.load_snapshot(snap_path)
     watch_task = asyncio.create_task(watcher2.watch())
 
     try:
@@ -174,7 +158,7 @@ async def test_watch_catches_up_from_loaded_snapshot(
         live_cell_id = 3 * 1000 + 3
         for _ in range(20):
             await asyncio.sleep(0.1)
-            if watcher2.grid.get(live_cell_id) is not None:
+            if watcher2.store.get(live_cell_id) is not None:
                 break
         else:
             raise AssertionError("watch did not pick up a live event after restart")
@@ -182,7 +166,7 @@ async def test_watch_catches_up_from_loaded_snapshot(
         missed_cell_id = 2 * 1000 + 2
         for _ in range(20):
             await asyncio.sleep(0.1)
-            if watcher2.grid.get(missed_cell_id) is not None:
+            if watcher2.store.get(missed_cell_id) is not None:
                 break
         else:
             raise AssertionError("watch did not catch up from the loaded snapshot block")
@@ -205,7 +189,6 @@ async def test_watch_reconnects_after_disconnect(w3: Web3, http_url: str, ws_url
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
     watch_task = asyncio.create_task(watcher.watch())
 
-    # wait for subscription to establish
     for _ in range(20):
         await asyncio.sleep(0.1)
         if watcher._ws_w3 is not None:
@@ -213,32 +196,29 @@ async def test_watch_reconnects_after_disconnect(w3: Web3, http_url: str, ws_url
     else:
         raise AssertionError("watch did not connect in time")
 
-    # first event — picked up live by watch
     send_tx(w3, grid.functions.rentCell(1, 1, 0xFF0000), _DEPLOYER_KEY)
     cell_id_1 = 1 * 1000 + 1
     for _ in range(20):
         await asyncio.sleep(0.1)
-        if watcher.grid.get(cell_id_1) is not None:
+        if watcher.store.get(cell_id_1) is not None:
             break
     else:
         raise AssertionError("first event not picked up by watch")
 
-    # force-disconnect the WebSocket
     await watcher._ws_w3.provider._provider_specific_disconnect()
 
-    # second event — emitted while disconnected, recovered via backfill on reconnect
     send_tx(w3, grid.functions.rentCell(2, 2, 0x00FF00), _DEPLOYER_KEY)
     cell_id_2 = 2 * 1000 + 2
     for _ in range(30):
         await asyncio.sleep(0.1)
-        if watcher.grid.get(cell_id_2) is not None:
+        if watcher.store.get(cell_id_2) is not None:
             break
     else:
         raise AssertionError("second event not recovered after reconnect")
 
     watch_task.cancel()
-    assert watcher.grid.get(cell_id_1) is not None
-    assert watcher.grid.get(cell_id_2) is not None
+    assert watcher.store.get(cell_id_1) is not None
+    assert watcher.store.get(cell_id_2) is not None
 
 
 async def test_watch_resubscribes_before_reconnect_backfill(
@@ -292,18 +272,19 @@ async def test_watch_resubscribes_before_reconnect_backfill(
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
     watcher._decode_log = lambda log: CellColorUpdated(cell_id=log["cell_id"], renter="0xabc", color=0x0000FF)  # type: ignore[method-assign]
 
-    def backfill(_from_block: int) -> None:
+    def fetch_logs(_from_block: int) -> list:
         if state["subscription_active"]:
             state["race_event_delivered"] = True
+        return []
 
     monkeypatch.setattr(watcher_module, "AsyncWeb3", FakeAsyncWeb3)
-    monkeypatch.setattr(watcher, "backfill", backfill)
+    monkeypatch.setattr(watcher, "fetch_logs", fetch_logs)
 
     watch_task = asyncio.create_task(watcher.watch())
     try:
         for _ in range(30):
             await asyncio.sleep(0.05)
-            if watcher.grid.get(2) is not None:
+            if watcher.store.get(2) is not None:
                 break
         else:
             raise AssertionError("watch did not resubscribe before reconnect backfill")
@@ -323,7 +304,7 @@ async def test_watch_backfills_from_start_block_on_cold_start(
 
     class FakeEth:
         async def subscribe(self, *_args: object, **_kwargs: object) -> None:
-            await asyncio.sleep(0)  # yield control so the test's sleep can fire
+            await asyncio.sleep(0)
 
     class FakeSocket:
         async def process_subscriptions(self):
@@ -348,12 +329,13 @@ async def test_watch_backfills_from_start_block_on_cold_start(
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts, start_block=50)
     watcher._decode_log = lambda log: CellColorUpdated(cell_id=log["cell_id"], renter="0xabc", color=0x0000FF)  # type: ignore[method-assign]
 
-    def backfill(from_block: int) -> None:
+    def fetch_logs(from_block: int) -> list:
         if state["backfill_from_block"] is None:
             state["backfill_from_block"] = from_block
+        return []
 
     monkeypatch.setattr(watcher_module, "AsyncWeb3", FakeAsyncWeb3)
-    monkeypatch.setattr(watcher, "backfill", backfill)
+    monkeypatch.setattr(watcher, "fetch_logs", fetch_logs)
 
     watch_task = asyncio.create_task(watcher.watch())
     try:
@@ -376,7 +358,7 @@ async def test_watch_backfills_from_last_block_on_reconnect(
 
     class FakeEth:
         async def subscribe(self, *_args: object, **_kwargs: object) -> None:
-            await asyncio.sleep(0)  # yield control so the test's sleep can fire
+            await asyncio.sleep(0)
 
     class FakeSocket:
         async def process_subscriptions(self):
@@ -399,15 +381,16 @@ async def test_watch_backfills_from_last_block_on_reconnect(
             pass
 
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts, start_block=50)
-    watcher._last_block = 100
+    watcher.store._last_block = 100
     watcher._decode_log = lambda log: CellColorUpdated(cell_id=log["cell_id"], renter="0xabc", color=0x0000FF)  # type: ignore[method-assign]
 
-    def backfill(from_block: int) -> None:
+    def fetch_logs(from_block: int) -> list:
         if state["backfill_from_block"] is None:
             state["backfill_from_block"] = from_block
+        return []
 
     monkeypatch.setattr(watcher_module, "AsyncWeb3", FakeAsyncWeb3)
-    monkeypatch.setattr(watcher, "backfill", backfill)
+    monkeypatch.setattr(watcher, "fetch_logs", fetch_logs)
 
     watch_task = asyncio.create_task(watcher.watch())
     try:
@@ -420,7 +403,7 @@ async def test_watch_backfills_from_last_block_on_reconnect(
     assert state["backfill_from_block"] == 100
 
 
-async def test_watch_backfill_called_via_to_thread(
+async def test_watch_fetch_logs_called_via_to_thread(
     monkeypatch: pytest.MonkeyPatch,
     http_url: str,
     ws_url: str,
@@ -434,9 +417,9 @@ async def test_watch_backfill_called_via_to_thread(
 
     class FakeSocket:
         async def process_subscriptions(self):
-            await asyncio.sleep(10_000)  # block until cancelled; avoids tight loop
+            await asyncio.sleep(10_000)
             return
-            yield  # make it an async generator
+            yield
 
     class FakeAsyncWeb3:
         eth = FakeEth()
@@ -454,8 +437,8 @@ async def test_watch_backfill_called_via_to_thread(
         async def __aexit__(self, *_args: object) -> None:
             pass
 
-    def fake_backfill(_from_block: int) -> None:
-        pass
+    def fake_fetch_logs(_from_block: int) -> list:
+        return []
 
     async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
         to_thread_calls.append(func)
@@ -464,7 +447,7 @@ async def test_watch_backfill_called_via_to_thread(
 
     watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts)
     monkeypatch.setattr(watcher_module, "AsyncWeb3", FakeAsyncWeb3)
-    monkeypatch.setattr(watcher, "backfill", fake_backfill)
+    monkeypatch.setattr(watcher, "fetch_logs", fake_fetch_logs)
     monkeypatch.setattr(watcher_module.asyncio, "to_thread", fake_to_thread)
 
     watch_task = asyncio.create_task(watcher.watch())
@@ -475,10 +458,10 @@ async def test_watch_backfill_called_via_to_thread(
         with suppress(asyncio.CancelledError):
             await watch_task
 
-    assert fake_backfill in to_thread_calls
+    assert fake_fetch_logs in to_thread_calls
 
 
-async def test_watch_populates_grid(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
+async def test_watch_populates_store(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     caller = Account.from_key(_DEPLOYER_KEY)
 
     faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
@@ -497,14 +480,14 @@ async def test_watch_populates_grid(w3: Web3, http_url: str, ws_url: str, deploy
     cell_id = 10 * 1000 + 5
     for _ in range(20):
         await asyncio.sleep(0.1)
-        if watcher.grid.get(cell_id) is not None:
+        if watcher.store.get(cell_id) is not None:
             break
     else:
-        raise AssertionError("grid was not updated within timeout")
+        raise AssertionError("store was not updated within timeout")
 
     watch_task.cancel()
 
-    cell = watcher.grid.get(cell_id)
+    cell = watcher.store.get(cell_id)
     assert cell is not None
     assert cell.renter == caller.address.lower()
     assert cell.color == RGB(r=255, g=136, b=0)

@@ -1,5 +1,4 @@
 import asyncio
-from pathlib import Path
 
 from web3 import AsyncWeb3, Web3
 from web3.exceptions import PersistentConnectionError
@@ -10,8 +9,7 @@ from polyplace_contracts import PLACE_GRID_ABI
 from polyplace_contracts.deploy import Deployment
 
 from polyplace_watcher.events import CellColorUpdated, CellRented
-from polyplace_watcher.grid import Grid
-from polyplace_watcher.snapshot import Snapshot
+from polyplace_watcher.grid_store import GridStore
 
 
 def _event_topic(abi: list, name: str) -> bytes:
@@ -25,15 +23,20 @@ _CELL_COLOR_UPDATED_TOPIC = _event_topic(PLACE_GRID_ABI, "CellColorUpdated")
 
 
 class Watcher:
-    def __init__(self, http_url: str, ws_url: str, deployment: Deployment, start_block: int = 0) -> None:
-        self.grid = Grid()
+    def __init__(
+        self,
+        http_url: str,
+        ws_url: str,
+        deployment: Deployment,
+        start_block: int = 0,
+        store: GridStore | None = None,
+    ) -> None:
+        self.store = store if store is not None else GridStore()
         self._w3 = Web3(Web3.HTTPProvider(http_url))
         self._ws_url = ws_url
         self._contract = self._w3.eth.contract(address=deployment.grid, abi=PLACE_GRID_ABI)
         self._deployment = deployment
         self._start_block: int = start_block
-        self._last_block: int | None = None
-        self._last_log_index: int | None = None
         self._ws_w3: AsyncWeb3 | None = None
 
     def _decode_log(self, log: LogReceipt) -> CellRented | CellColorUpdated | None:
@@ -46,30 +49,19 @@ class Watcher:
             return CellColorUpdated(cell_id=args["cellId"], renter=args["renter"], color=args["color"])
         return None
 
-    def backfill(self, from_block: int) -> None:
+    def fetch_logs(self, from_block: int) -> list[tuple[CellRented | CellColorUpdated, int, int]]:
         logs = self._w3.eth.get_logs({
             "address": self._deployment.grid,
             "fromBlock": from_block,
             "toBlock": "latest",
             "topics": [[_CELL_RENTED_TOPIC, _CELL_COLOR_UPDATED_TOPIC]],
         })
+        result = []
         for log in logs:
             event = self._decode_log(log)
             if event is not None:
-                self.grid.apply(event)
-                self._last_block = log["blockNumber"]
-                self._last_log_index = log["logIndex"]
-
-    def save_snapshot(self, path: Path) -> None:
-        if self._last_block is None:
-            raise ValueError("No blocks processed yet; cannot save snapshot.")
-        snap = Snapshot(last_block=self._last_block, cells=dict(self.grid._cells))
-        path.write_text(snap.model_dump_json())
-
-    def load_snapshot(self, path: Path) -> None:
-        snap = Snapshot.model_validate_json(path.read_text())
-        self.grid._cells = snap.cells
-        self._last_block = snap.last_block
+                result.append((event, log["blockNumber"], log["logIndex"]))
+        return result
 
     async def watch(self) -> None:
         while True:
@@ -80,13 +72,17 @@ class Watcher:
                         "address": self._deployment.grid,
                         "topics": [[_CELL_RENTED_TOPIC, _CELL_COLOR_UPDATED_TOPIC]],
                     })
-                    await asyncio.to_thread(self.backfill, self._last_block if self._last_block is not None else self._start_block)
+                    from_block = self.store.last_block if self.store.last_block is not None else self._start_block
+                    for event, block, log_index in await asyncio.to_thread(self.fetch_logs, from_block):
+                        self.store.apply(event, block, log_index)
                     async for response in w3.socket.process_subscriptions():
                         event = self._decode_log(response["result"])
                         if event is not None:
-                            self.grid.apply(event)
-                            self._last_block = response["result"]["blockNumber"]
-                            self._last_log_index = response["result"]["logIndex"]
+                            self.store.apply(
+                                event,
+                                response["result"]["blockNumber"],
+                                response["result"]["logIndex"],
+                            )
             except asyncio.CancelledError:
                 raise
             except (ConnectionClosed, PersistentConnectionError):

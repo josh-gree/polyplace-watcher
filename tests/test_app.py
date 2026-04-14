@@ -6,40 +6,33 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import polyplace_watcher.app as app_module
-from polyplace_watcher.app import _GridCache, _snapshot_loop, app, lifespan
+from polyplace_watcher.app import _snapshot_loop, app, lifespan
 from polyplace_watcher.events import CellColorUpdated, CellRented
 from polyplace_watcher.grid import Grid
+from polyplace_watcher.grid_store import GridStore
 from polyplace_watcher.snapshot import Snapshot
 
 ADDR_A = "0x" + "ab" * 20
 EXPIRES_AT = 1712345678
 
 
-def _make_client(grid: Grid, last_block: int | None, last_log_index: int | None = None) -> AsyncClient:
+def _make_client(store: GridStore) -> AsyncClient:
     """Return a test client with app.state pre-populated, bypassing lifespan."""
-    app.state.watcher = _FakeWatcher(grid, last_block, last_log_index)
-    app.state.grid_cache = _GridCache()
+    app.state.store = store
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-
-
-class _FakeWatcher:
-    def __init__(self, grid: Grid, last_block: int | None, last_log_index: int | None = None) -> None:
-        self.grid = grid
-        self._last_block = last_block
-        self._last_log_index = last_log_index
 
 
 @pytest.fixture
 def empty_grid_client() -> AsyncClient:
-    return _make_client(Grid(), last_block=None)
+    return _make_client(GridStore())
 
 
 @pytest.fixture
 def populated_grid_client() -> AsyncClient:
-    grid = Grid()
-    grid.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT))
-    grid.apply(CellColorUpdated(cell_id=0, renter=ADDR_A, color=0xFF8800))
-    return _make_client(grid, last_block=42, last_log_index=5)
+    store = GridStore()
+    store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=42, log_index=4)
+    store.apply(CellColorUpdated(cell_id=0, renter=ADDR_A, color=0xFF8800), block=42, log_index=5)
+    return _make_client(store)
 
 
 async def test_get_grid_returns_200(populated_grid_client: AsyncClient) -> None:
@@ -93,20 +86,17 @@ async def test_get_grid_cache_not_recomputed_between_requests(
         r1 = await client.get("/grid")
         r2 = await client.get("/grid")
     assert r1.content == r2.content
-    assert app.state.grid_cache.last_block == 42
-    assert app.state.grid_cache.last_log_index == 5
 
 
 async def test_get_grid_cache_invalidates_for_new_log_in_same_block() -> None:
-    grid = Grid()
-    grid.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT))
+    store = GridStore()
+    store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=42, log_index=0)
 
-    async with _make_client(grid, last_block=42, last_log_index=0) as client:
+    async with _make_client(store) as client:
         r1 = await client.get("/grid")
         assert r1.headers["etag"] == '"42.0"'
 
-        grid.apply(CellColorUpdated(cell_id=0, renter=ADDR_A, color=0xFF8800))
-        app.state.watcher._last_log_index = 1
+        store.apply(CellColorUpdated(cell_id=0, renter=ADDR_A, color=0xFF8800), block=42, log_index=1)
 
         r2 = await client.get("/grid", headers={"if-none-match": r1.headers["etag"]})
 
@@ -131,27 +121,6 @@ async def test_get_grid_no_last_block_returns_empty_grid(
     assert rt._cells == {}
 
 
-async def test_get_grid_compresses_via_to_thread(
-    monkeypatch: pytest.MonkeyPatch,
-    populated_grid_client: AsyncClient,
-) -> None:
-    import gzip as gzip_module
-
-    to_thread_calls: list[object] = []
-
-    async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
-        to_thread_calls.append(func)
-        if callable(func):
-            return func(*args, **kwargs)  # type: ignore[operator]
-
-    monkeypatch.setattr(app_module.asyncio, "to_thread", fake_to_thread)
-
-    async with populated_grid_client as client:
-        await client.get("/grid")
-
-    assert gzip_module.compress in to_thread_calls
-
-
 # --- _watcher_from_env ---
 
 
@@ -164,79 +133,106 @@ def test_watcher_from_env_uses_start_block(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("FAUCET_ADDRESS", "0x" + "03" * 20)
 
     from polyplace_watcher.app import _watcher_from_env
-    watcher = _watcher_from_env()
+    watcher = _watcher_from_env(GridStore())
     assert watcher._start_block == 12345
 
 
 # --- snapshot loop ---
 
 
-class _FakeSnapshotWatcher:
-    def __init__(self, last_block: int | None) -> None:
-        self.grid = Grid()
-        self._last_block = last_block
-        self.saved_paths: list[Path] = []
-
-    def save_snapshot(self, path: Path) -> None:
-        self.saved_paths.append(path)
-
-    async def watch(self) -> None:
-        await asyncio.sleep(10_000)
-
-
 async def test_snapshot_loop_saves_when_last_block_set(tmp_path: Path) -> None:
-    watcher = _FakeSnapshotWatcher(last_block=42)
+    store = GridStore()
+    store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=42, log_index=0)
     path = tmp_path / "snap.json"
 
-    task = asyncio.create_task(_snapshot_loop(watcher, path, interval=0))
+    task = asyncio.create_task(_snapshot_loop(store, path, interval=0))
     await asyncio.sleep(0.05)
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
 
-    assert path in watcher.saved_paths
+    assert path.exists()
 
 
 async def test_snapshot_loop_skips_when_no_last_block(tmp_path: Path) -> None:
-    watcher = _FakeSnapshotWatcher(last_block=None)
+    store = GridStore()
     path = tmp_path / "snap.json"
 
-    task = asyncio.create_task(_snapshot_loop(watcher, path, interval=0))
+    task = asyncio.create_task(_snapshot_loop(store, path, interval=0))
     await asyncio.sleep(0.05)
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
 
-    assert watcher.saved_paths == []
+    assert not path.exists()
+
+
+async def test_snapshot_loop_skips_when_nothing_changed(tmp_path: Path) -> None:
+    store = GridStore()
+    store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=42, log_index=0)
+    path = tmp_path / "snap.json"
+
+    save_calls: list[Path] = []
+    original_save = store.save_snapshot
+    store.save_snapshot = lambda p: (save_calls.append(p), original_save(p))  # type: ignore[method-assign]
+
+    task = asyncio.create_task(_snapshot_loop(store, path, interval=0))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert len(save_calls) == 1
+
+
+async def test_snapshot_loop_uses_to_thread(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    to_thread_calls: list[object] = []
+
+    async def fake_to_thread(func: object, *args: object, **kwargs: object) -> object:
+        to_thread_calls.append(func)
+        if callable(func):
+            return func(*args, **kwargs)  # type: ignore[operator]
+
+    monkeypatch.setattr(app_module.asyncio, "to_thread", fake_to_thread)
+
+    store = GridStore()
+    store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=42, log_index=0)
+    path = tmp_path / "snap.json"
+
+    task = asyncio.create_task(_snapshot_loop(store, path, interval=0))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert store.save_snapshot in to_thread_calls
 
 
 # --- lifespan snapshot behaviour ---
+
+
+class _FakeWatcher:
+    def __init__(self, store: GridStore) -> None:
+        self.store = store
+
+    async def watch(self) -> None:
+        await asyncio.sleep(10_000)
 
 
 async def test_lifespan_loads_existing_snapshot(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     snap_path = tmp_path / "snap.json"
-    Snapshot(last_block=99, cells={}).model_dump_json()
     snap_path.write_text(Snapshot(last_block=99, cells={}).model_dump_json())
-
-    loaded_paths: list[Path] = []
-
-    class FakeWatcher(_FakeSnapshotWatcher):
-        def __init__(self) -> None:
-            super().__init__(last_block=None)
-
-        def load_snapshot(self, path: Path) -> None:
-            loaded_paths.append(path)
-            self._last_block = 99
 
     monkeypatch.setenv("SNAPSHOT_PATH", str(snap_path))
     monkeypatch.setenv("SNAPSHOT_INTERVAL", "3600")
-    monkeypatch.setattr(app_module, "_watcher_from_env", lambda: FakeWatcher())
+    monkeypatch.setattr(app_module, "_watcher_from_env", lambda store: _FakeWatcher(store))
 
     async with lifespan(app):
-        assert app.state.watcher._last_block == 99
-        assert loaded_paths == [snap_path]
+        assert app.state.store.last_block == 99
 
 
 async def test_lifespan_skips_load_when_no_snapshot(
@@ -244,21 +240,12 @@ async def test_lifespan_skips_load_when_no_snapshot(
 ) -> None:
     snap_path = tmp_path / "snap.json"  # does not exist
 
-    loaded_paths: list[Path] = []
-
-    class FakeWatcher(_FakeSnapshotWatcher):
-        def __init__(self) -> None:
-            super().__init__(last_block=None)
-
-        def load_snapshot(self, path: Path) -> None:
-            loaded_paths.append(path)
-
     monkeypatch.setenv("SNAPSHOT_PATH", str(snap_path))
     monkeypatch.setenv("SNAPSHOT_INTERVAL", "3600")
-    monkeypatch.setattr(app_module, "_watcher_from_env", lambda: FakeWatcher())
+    monkeypatch.setattr(app_module, "_watcher_from_env", lambda store: _FakeWatcher(store))
 
     async with lifespan(app):
-        assert loaded_paths == []
+        assert app.state.store.last_block is None
 
 
 async def test_lifespan_saves_snapshot_on_shutdown(
@@ -266,16 +253,15 @@ async def test_lifespan_saves_snapshot_on_shutdown(
 ) -> None:
     snap_path = tmp_path / "snap.json"
 
-    class FakeWatcher(_FakeSnapshotWatcher):
-        def __init__(self) -> None:
-            super().__init__(last_block=42)
+    def fake_watcher_from_env(store: GridStore) -> _FakeWatcher:
+        store._last_block = 42
+        return _FakeWatcher(store)
 
     monkeypatch.setenv("SNAPSHOT_PATH", str(snap_path))
     monkeypatch.setenv("SNAPSHOT_INTERVAL", "3600")
-    watcher = FakeWatcher()
-    monkeypatch.setattr(app_module, "_watcher_from_env", lambda: watcher)
+    monkeypatch.setattr(app_module, "_watcher_from_env", fake_watcher_from_env)
 
     async with lifespan(app):
         pass
 
-    assert snap_path in watcher.saved_paths
+    assert snap_path.exists()
