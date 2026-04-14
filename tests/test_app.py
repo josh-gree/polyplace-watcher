@@ -97,6 +97,30 @@ async def test_get_grid_cache_not_recomputed_between_requests(
     assert app.state.grid_cache.last_log_index == 5
 
 
+async def test_get_grid_cache_invalidates_for_new_log_in_same_block() -> None:
+    grid = Grid()
+    grid.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT))
+
+    async with _make_client(grid, last_block=42, last_log_index=0) as client:
+        r1 = await client.get("/grid")
+        assert r1.headers["etag"] == '"42.0"'
+
+        grid.apply(CellColorUpdated(cell_id=0, renter=ADDR_A, color=0xFF8800))
+        app.state.watcher._last_log_index = 1
+
+        r2 = await client.get("/grid", headers={"if-none-match": r1.headers["etag"]})
+
+    assert r2.status_code == 200
+    assert r2.headers["etag"] == '"42.1"'
+    assert r2.content != r1.content
+    cell = Grid.from_bytes(r2.content).get(0)
+    assert cell is not None
+    assert cell.color is not None
+    assert cell.color.r == 255
+    assert cell.color.g == 136
+    assert cell.color.b == 0
+
+
 async def test_get_grid_no_last_block_returns_empty_grid(
     empty_grid_client: AsyncClient,
 ) -> None:
