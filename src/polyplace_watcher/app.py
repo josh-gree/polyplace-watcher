@@ -22,12 +22,13 @@ class _GridCache:
 def _watcher_from_env() -> Watcher:
     http_url = os.environ["WEB3_HTTP_URL"]
     ws_url = os.environ["WEB3_WS_URL"]
+    start_block = int(os.environ["START_BLOCK"])
     deployment = Deployment(
         grid=os.environ["GRID_ADDRESS"],
         token=os.environ["TOKEN_ADDRESS"],
         faucet=os.environ["FAUCET_ADDRESS"],
     )
-    return Watcher(http_url=http_url, ws_url=ws_url, deployment=deployment)
+    return Watcher(http_url=http_url, ws_url=ws_url, deployment=deployment, start_block=start_block)
 
 
 async def _snapshot_loop(watcher: Watcher, path: Path, interval: int) -> None:

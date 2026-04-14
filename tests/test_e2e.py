@@ -38,6 +38,7 @@ async def test_e2e_grid_endpoint(
     monkeypatch.setenv("FAUCET_ADDRESS", deployed_contracts.faucet)
     monkeypatch.setenv("SNAPSHOT_PATH", str(tmp_path / "snap.json"))
     monkeypatch.setenv("SNAPSHOT_INTERVAL", "3600")
+    monkeypatch.setenv("START_BLOCK", "0")
 
     faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
     token = w3.eth.contract(address=deployed_contracts.token, abi=PLACE_TOKEN_ABI)

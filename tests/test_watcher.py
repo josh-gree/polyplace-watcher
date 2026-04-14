@@ -313,6 +313,113 @@ async def test_watch_resubscribes_before_reconnect_backfill(
             await watch_task
 
 
+async def test_watch_backfills_from_start_block_on_cold_start(
+    monkeypatch: pytest.MonkeyPatch,
+    http_url: str,
+    ws_url: str,
+    deployed_contracts: Deployment,
+) -> None:
+    state: dict[str, object] = {"backfill_from_block": None}
+
+    class FakeEth:
+        async def subscribe(self, *_args: object, **_kwargs: object) -> None:
+            await asyncio.sleep(0)  # yield control so the test's sleep can fire
+
+    class FakeSocket:
+        async def process_subscriptions(self):
+            yield {"result": {"blockNumber": 1, "logIndex": 0, "cell_id": 1}}
+
+    class FakeAsyncWeb3:
+        eth = FakeEth()
+
+        @staticmethod
+        def WebSocketProvider(url: str) -> str:
+            return url
+
+        def __init__(self, _provider: str) -> None:
+            self.socket = FakeSocket()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts, start_block=50)
+    watcher._decode_log = lambda log: CellColorUpdated(cell_id=log["cell_id"], renter="0xabc", color=0x0000FF)  # type: ignore[method-assign]
+
+    def backfill(from_block: int) -> None:
+        if state["backfill_from_block"] is None:
+            state["backfill_from_block"] = from_block
+
+    monkeypatch.setattr(watcher_module, "AsyncWeb3", FakeAsyncWeb3)
+    monkeypatch.setattr(watcher, "backfill", backfill)
+
+    watch_task = asyncio.create_task(watcher.watch())
+    try:
+        await asyncio.sleep(0.1)
+    finally:
+        watch_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await watch_task
+
+    assert state["backfill_from_block"] == 50
+
+
+async def test_watch_backfills_from_last_block_on_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+    http_url: str,
+    ws_url: str,
+    deployed_contracts: Deployment,
+) -> None:
+    state: dict[str, object] = {"backfill_from_block": None}
+
+    class FakeEth:
+        async def subscribe(self, *_args: object, **_kwargs: object) -> None:
+            await asyncio.sleep(0)  # yield control so the test's sleep can fire
+
+    class FakeSocket:
+        async def process_subscriptions(self):
+            yield {"result": {"blockNumber": 101, "logIndex": 0, "cell_id": 1}}
+
+    class FakeAsyncWeb3:
+        eth = FakeEth()
+
+        @staticmethod
+        def WebSocketProvider(url: str) -> str:
+            return url
+
+        def __init__(self, _provider: str) -> None:
+            self.socket = FakeSocket()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, deployment=deployed_contracts, start_block=50)
+    watcher._last_block = 100
+    watcher._decode_log = lambda log: CellColorUpdated(cell_id=log["cell_id"], renter="0xabc", color=0x0000FF)  # type: ignore[method-assign]
+
+    def backfill(from_block: int) -> None:
+        if state["backfill_from_block"] is None:
+            state["backfill_from_block"] = from_block
+
+    monkeypatch.setattr(watcher_module, "AsyncWeb3", FakeAsyncWeb3)
+    monkeypatch.setattr(watcher, "backfill", backfill)
+
+    watch_task = asyncio.create_task(watcher.watch())
+    try:
+        await asyncio.sleep(0.1)
+    finally:
+        watch_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await watch_task
+
+    assert state["backfill_from_block"] == 100
+
+
 async def test_watch_populates_grid(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     caller = Account.from_key(_DEPLOYER_KEY)
 

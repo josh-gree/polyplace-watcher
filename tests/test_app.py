@@ -131,6 +131,22 @@ async def test_get_grid_no_last_block_returns_empty_grid(
     assert rt._cells == {}
 
 
+# --- _watcher_from_env ---
+
+
+def test_watcher_from_env_uses_start_block(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEB3_HTTP_URL", "http://localhost:8545")
+    monkeypatch.setenv("WEB3_WS_URL", "ws://localhost:8545")
+    monkeypatch.setenv("START_BLOCK", "12345")
+    monkeypatch.setenv("GRID_ADDRESS", "0x" + "01" * 20)
+    monkeypatch.setenv("TOKEN_ADDRESS", "0x" + "02" * 20)
+    monkeypatch.setenv("FAUCET_ADDRESS", "0x" + "03" * 20)
+
+    from polyplace_watcher.app import _watcher_from_env
+    watcher = _watcher_from_env()
+    assert watcher._start_block == 12345
+
+
 # --- snapshot loop ---
 
 

@@ -25,12 +25,13 @@ _CELL_COLOR_UPDATED_TOPIC = _event_topic(PLACE_GRID_ABI, "CellColorUpdated")
 
 
 class Watcher:
-    def __init__(self, http_url: str, ws_url: str, deployment: Deployment) -> None:
+    def __init__(self, http_url: str, ws_url: str, deployment: Deployment, start_block: int = 0) -> None:
         self.grid = Grid()
         self._w3 = Web3(Web3.HTTPProvider(http_url))
         self._ws_url = ws_url
         self._contract = self._w3.eth.contract(address=deployment.grid, abi=PLACE_GRID_ABI)
         self._deployment = deployment
+        self._start_block: int = start_block
         self._last_block: int | None = None
         self._last_log_index: int | None = None
         self._ws_w3: AsyncWeb3 | None = None
@@ -79,8 +80,7 @@ class Watcher:
                         "address": self._deployment.grid,
                         "topics": [[_CELL_RENTED_TOPIC, _CELL_COLOR_UPDATED_TOPIC]],
                     })
-                    if self._last_block is not None:
-                        self.backfill(self._last_block)
+                    self.backfill(self._last_block if self._last_block is not None else self._start_block)
                     async for response in w3.socket.process_subscriptions():
                         event = self._decode_log(response["result"])
                         if event is not None:
