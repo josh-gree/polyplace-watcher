@@ -164,6 +164,24 @@ async def test_load_snapshot_restores_cells(tmp_path: Path) -> None:
     assert reader.get(7) == writer.get(7)
 
 
+async def test_load_snapshot_invalidates_compression_cache(tmp_path: Path) -> None:
+    store = GridStore()
+    store.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=1, log_index=0)
+    await store.compressed_bytes()
+
+    writer = GridStore()
+    writer.apply(CellRented(cell_id=5, renter=ADDR_A, expires_at=EXPIRES_AT), block=1, log_index=0)
+    path = tmp_path / "snap.json"
+    await writer.save_snapshot(path)
+
+    store.load_snapshot(path)
+    after = await store.compressed_bytes()
+    rt = Grid.from_bytes(gzip.decompress(after))
+
+    assert rt.get(0) is None
+    assert rt.get(5) == writer.get(5)
+
+
 async def test_snapshot_round_trip_preserves_last_block(tmp_path: Path) -> None:
     writer = GridStore()
     writer.apply(CellRented(cell_id=0, renter=ADDR_A, expires_at=EXPIRES_AT), block=42, log_index=3)

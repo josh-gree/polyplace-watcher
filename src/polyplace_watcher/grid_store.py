@@ -54,3 +54,4 @@ class GridStore:
         snap = Snapshot.model_validate_json(path.read_text())
         self._grid._cells = snap.cells
         self._last_block = snap.last_block
+        self._cache_key = _UNSET
