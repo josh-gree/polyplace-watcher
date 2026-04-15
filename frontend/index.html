@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Polyplace</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: monospace;
+      color: #888;
+    }
+
+    canvas {
+      display: block;
+      width: 100vmin;
+      height: 100vmin;
+      image-rendering: pixelated;
+    }
+
+    #status {
+      position: fixed;
+      bottom: 12px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 12px;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="grid" width="1000" height="1000"></canvas>
+  <div id="status">Loading…</div>
+
+  <script>
+    const MAGIC = [0x50, 0x4C, 0x47, 0x01]; // PLG\x01
+
+    async function loadGrid() {
+      const status = document.getElementById('status');
+      const canvas = document.getElementById('grid');
+      const ctx = canvas.getContext('2d');
+
+      try {
+        const res = await fetch('/grid');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const buf = await res.arrayBuffer();
+        const data = new Uint8Array(buf);
+        const view = new DataView(buf);
+
+        // Verify magic
+        for (let i = 0; i < 4; i++) {
+          if (data[i] !== MAGIC[i]) throw new Error('Bad magic bytes');
+        }
+
+        // Header (20 bytes total)
+        const width      = view.getUint16(4,  true);
+        const height     = view.getUint16(6,  true);
+        const nRenderers = view.getUint32(8,  true);
+        // n_rented at 12, meta_offset at 16 — not needed for rendering
+        let pos = 20;
+
+        // Skip address table
+        pos += nRenderers * 20;
+
+        // Color bitmap: ceil(width*height / 8) bytes
+        const totalCells = width * height;
+        const bitmapSize = Math.ceil(totalCells / 8);
+        const bitmapStart = pos;
+        pos += bitmapSize;
+
+        // Packed RGB starts here
+        const rgbStart = pos;
+
+        // Build ImageData — fill with dark gray as default
+        const imgData = ctx.createImageData(width, height);
+        const px = imgData.data;
+
+        // Fill default color
+        for (let i = 0; i < totalCells * 4; i += 4) {
+          px[i]     = 30;
+          px[i + 1] = 30;
+          px[i + 2] = 30;
+          px[i + 3] = 255;
+        }
+
+        // Walk bitmap and apply packed RGB
+        let rgbPos = rgbStart;
+        for (let cellId = 0; cellId < totalCells; cellId++) {
+          const byteIdx = cellId >> 3;
+          const bitIdx  = cellId & 7;
+          if (data[bitmapStart + byteIdx] & (1 << bitIdx)) {
+            const pixOff = cellId * 4;
+            px[pixOff]     = data[rgbPos];
+            px[pixOff + 1] = data[rgbPos + 1];
+            px[pixOff + 2] = data[rgbPos + 2];
+            // alpha already 255
+            rgbPos += 3;
+          }
+        }
+
+        ctx.putImageData(imgData, 0, 0);
+        status.textContent = '';
+      } catch (err) {
+        status.textContent = `Error: ${err.message}`;
+        console.error(err);
+      }
+    }
+
+    loadGrid();
+  </script>
+</body>
+</html>

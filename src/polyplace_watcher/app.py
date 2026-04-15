@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request, Response
+from fastapi.staticfiles import StaticFiles
 
 from polyplace_contracts.deploy import Deployment
 from polyplace_watcher.grid_store import GridStore
@@ -128,3 +129,8 @@ async def get_grid(request: Request) -> Response:
         media_type="application/octet-stream",
         headers={"ETag": etag, "Cache-Control": "no-cache", "Content-Encoding": "gzip"},
     )
+
+
+_frontend = Path(__file__).parent.parent.parent / "frontend"
+if _frontend.exists():
+    app.mount("/", StaticFiles(directory=_frontend, html=True), name="frontend")
