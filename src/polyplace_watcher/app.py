@@ -1,11 +1,12 @@
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from polyplace_contracts.deploy import Deployment
@@ -129,6 +130,26 @@ async def get_grid(request: Request) -> Response:
         media_type="application/octet-stream",
         headers={"ETag": etag, "Cache-Control": "no-cache", "Content-Encoding": "gzip"},
     )
+
+
+@app.websocket("/ws")
+async def websocket_grid(websocket: WebSocket) -> None:
+    store: GridStore = websocket.app.state.store
+    await websocket.accept()
+    queue = store.subscribe()
+    try:
+        _, snapshot = await store.compressed_snapshot()
+        await websocket.send_bytes(snapshot)
+        while True:
+            cell_id, r, g, b, renter, expires_at = await queue.get()
+            await websocket.send_text(json.dumps({
+                "i": cell_id, "r": r, "g": g, "b": b,
+                "renter": renter, "expires_at": expires_at,
+            }))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        store.unsubscribe(queue)
 
 
 _frontend = Path(__file__).parent.parent.parent / "frontend"

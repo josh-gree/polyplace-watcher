@@ -26,6 +26,15 @@ class GridStore:
         self._last_log_index: int | None = None
         self._cache_key: object = _UNSET
         self._cache_bytes: bytes = b""
+        self._subscribers: set[asyncio.Queue[tuple[int, int, int, int, str | None, int | None]]] = set()
+
+    def subscribe(self) -> asyncio.Queue[tuple[int, int, int, int, str | None, int | None]]:
+        q: asyncio.Queue[tuple[int, int, int, int, str | None, int | None]] = asyncio.Queue()
+        self._subscribers.add(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue[tuple[int, int, int, int, str | None, int | None]]) -> None:
+        self._subscribers.discard(q)
 
     def _state_key(self) -> _StateKey:
         return (self._last_block, self._last_log_index)
@@ -52,6 +61,15 @@ class GridStore:
             self._last_block = block
             self._last_log_index = log_index
             self._cache_key = _UNSET
+            cell = self._grid.get(event.cell_id)
+            color = cell.color if cell else None
+
+        if color is not None:
+            expires_ts = int(cell.expires_at.timestamp()) if cell.expires_at else None
+            update = (event.cell_id, color.r, color.g, color.b, cell.renter, expires_ts)
+            for q in list(self._subscribers):
+                q.put_nowait(update)
+
         logger.debug(
             "grid_event_applied",
             extra={
