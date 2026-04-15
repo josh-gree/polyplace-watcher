@@ -152,6 +152,5 @@ async def websocket_grid(websocket: WebSocket) -> None:
         store.unsubscribe(queue)
 
 
-_frontend = Path(__file__).parent.parent.parent / "frontend"
-if _frontend.exists():
-    app.mount("/", StaticFiles(directory=_frontend, html=True), name="frontend")
+if _frontend_dir := os.environ.get("FRONTEND_DIR"):
+    app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
