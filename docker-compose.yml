@@ -7,6 +7,9 @@ services:
       - --host=0.0.0.0
       - --port=8545
       - --block-time=2
+      # The paint service stress-tests the chain with up to 1M transactions.
+      # Give dev accounts effectively unlimited local ETH for gas.
+      - --balance=1000000000000
     ports:
       - "8545:8545"
     healthcheck:

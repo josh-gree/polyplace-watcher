@@ -52,6 +52,7 @@ print()
 print("Funding account via faucet...")
 send(faucet.functions.setClaimAmount(total_cost))
 send(faucet.functions.claim())
+send(faucet.functions.setClaimAmount(100 * 10**18))
 
 print("Approving grid to spend tokens...")
 send(token.functions.approve(grid_address, total_cost))

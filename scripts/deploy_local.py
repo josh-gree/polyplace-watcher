@@ -20,7 +20,7 @@ else:
     raise SystemExit(f"Cannot connect to anvil at {ANVIL_URL} — is it running?")
 
 print("Deploying contracts...", flush=True)
-deployment = deploy(w3, DEPLOYER_KEY)
+deployment = deploy(w3, DEPLOYER_KEY, cooldown=30)
 print("Done.\n")
 
 print("Export these env vars before starting the watcher:\n")
