@@ -138,8 +138,6 @@ async def websocket_grid(websocket: WebSocket) -> None:
     await websocket.accept()
     queue = store.subscribe()
     try:
-        _, snapshot = await store.compressed_snapshot()
-        await websocket.send_bytes(snapshot)
         while True:
             cell_id, r, g, b, renter, expires_at = await queue.get()
             await websocket.send_text(json.dumps({

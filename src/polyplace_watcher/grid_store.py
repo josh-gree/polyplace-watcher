@@ -85,44 +85,45 @@ class GridStore:
         return self._grid.get(cell_id)
 
     async def compressed_snapshot(self) -> tuple[str, bytes]:
-        while True:
-            with self._lock:
-                key = self._state_key()
-                etag = self._etag_for_key(key)
-                if key == self._cache_key:
-                    logger.debug(
-                        "compressed_snapshot_cache_hit",
-                        extra={
-                            "component": "grid_store",
-                            "etag": etag,
-                            "byte_count": len(self._cache_bytes),
-                        },
-                    )
-                    return etag, self._cache_bytes
-                grid = self._grid.clone()
+        with self._lock:
+            key = self._state_key()
+            etag = self._etag_for_key(key)
+            if key == self._cache_key:
+                logger.debug(
+                    "compressed_snapshot_cache_hit",
+                    extra={
+                        "component": "grid_store",
+                        "etag": etag,
+                        "byte_count": len(self._cache_bytes),
+                    },
+                )
+                return etag, self._cache_bytes
+            grid = self._grid.clone()
 
+        logger.debug(
+            "compressed_snapshot_cache_miss",
+            extra={"component": "grid_store", "etag": etag},
+        )
+        data = await asyncio.to_thread(_compress_grid, grid)
+
+        with self._lock:
+            current_key = self._state_key()
+            if current_key == self._cache_key:
+                # A concurrent request already stored a newer snapshot; use it.
+                return self._etag_for_key(current_key), self._cache_bytes
+            # Store what we computed — may be slightly stale if the grid moved
+            # during compression, but the WebSocket stream covers any delta.
+            self._cache_key = key
+            self._cache_bytes = data
             logger.debug(
-                "compressed_snapshot_cache_miss",
-                extra={"component": "grid_store", "etag": etag},
+                "compressed_snapshot_cache_stored",
+                extra={
+                    "component": "grid_store",
+                    "etag": etag,
+                    "byte_count": len(data),
+                },
             )
-            data = await asyncio.to_thread(_compress_grid, grid)
-
-            with self._lock:
-                current_key = self._state_key()
-                if current_key == key:
-                    self._cache_key = key
-                    self._cache_bytes = data
-                    logger.debug(
-                        "compressed_snapshot_cache_stored",
-                        extra={
-                            "component": "grid_store",
-                            "etag": etag,
-                            "byte_count": len(data),
-                        },
-                    )
-                    return etag, data
-                if current_key == self._cache_key:
-                    return self._etag_for_key(current_key), self._cache_bytes
+            return etag, data
 
     async def save_snapshot(self, path: Path) -> None:
         with self._lock:
