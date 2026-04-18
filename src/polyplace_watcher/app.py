@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from polyplace_contracts.deploy import Deployment
@@ -96,6 +97,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(lifespan=lifespan)
+
+_cors_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["GET"],
+    allow_headers=["*"],
+    expose_headers=["ETag"],
+)
+
+
+@app.get("/health")
+async def get_health(request: Request) -> dict[str, int | None]:
+    store: GridStore = request.app.state.store
+    return {"last_block": store.last_block, "last_log_index": store.last_log_index}
 
 
 @app.get("/grid")
