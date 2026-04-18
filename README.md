@@ -1,5 +1,13 @@
 # polyplace-watcher
 
+## Frontend
+
+This service only exposes the watcher API and WebSocket endpoints. It does not
+serve frontend assets.
+
+Run the frontend separately from `../polyplace-frontend`, using the Worker-local
+dev setup when testing the full local topology.
+
 ## Logging
 
 The service emits structured JSON logs to stdout and `logs/polyplace-watcher.log`.

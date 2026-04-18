@@ -8,7 +8,6 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from polyplace_contracts.deploy import Deployment
 from polyplace_watcher.grid_store import GridStore
@@ -164,7 +163,3 @@ async def websocket_grid(websocket: WebSocket) -> None:
         pass
     finally:
         store.unsubscribe(queue)
-
-
-if _frontend_dir := os.environ.get("FRONTEND_DIR"):
-    app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
