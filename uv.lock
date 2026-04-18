@@ -897,7 +897,7 @@ wheels = [
 [[package]]
 name = "polyplace-contracts"
 version = "0.1.0"
-source = { git = "https://github.com/josh-gree/polyplace-contracts.git?subdirectory=packages%2Fpython#4a2d6dd0f3527978ae496175afba75075319f5b5" }
+source = { git = "https://github.com/josh-gree/polyplace-contracts.git?subdirectory=packages%2Fpython#536973dc5863cfc89eaa4ca6c36b1fa7284756bc" }
 dependencies = [
     { name = "web3" },
 ]
