@@ -10,8 +10,20 @@ dev setup when testing the full local topology.
 
 ## Local Backend
 
-The local backend is intentionally multi-step so contract addresses are not
-hardcoded in Docker Compose.
+Docker Compose runs the backend side of the realistic local stack: Anvil on
+`127.0.0.1:8545` and the watcher API/WebSocket service on `127.0.0.1:8000`.
+The frontend Worker runs separately on `127.0.0.1:8787`, so local browser
+requests still exercise CORS.
+
+To start just the chain and watcher:
+
+```sh
+podman compose up anvil watcher
+```
+
+Compose includes deterministic contract address defaults for a fresh Anvil
+deployment. To deploy contracts first and have the watcher use the generated
+runtime config:
 
 ```sh
 just local-chain
@@ -21,8 +33,8 @@ just watcher
 
 `just deploy-local` deploys contracts to the host Anvil endpoint
 `http://127.0.0.1:8545` and writes `.local/watcher.env`. The watcher container
-loads that file and connects to Anvil through the Compose service name:
-`http://anvil:8545` and `ws://anvil:8545`.
+uses that file as a Compose env override when it exists, and connects to Anvil
+through the Compose service name: `http://anvil:8545` and `ws://anvil:8545`.
 
 The generated `.local/watcher.env` is local runtime state and is ignored by git.
 

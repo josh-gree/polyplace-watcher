@@ -11,10 +11,9 @@ local-chain:
 deploy-local:
     uv run python scripts/deploy_local.py
 
-# Start the watcher against the deployment in .local/watcher.env.
+# Start the watcher, using .local/watcher.env as a Compose override when present.
 watcher:
-    test -f .local/watcher.env || (echo 'Missing .local/watcher.env; run just deploy-local first.' && exit 1)
-    podman compose up --build watcher
+    if test -f .local/watcher.env; then podman compose --env-file .local/watcher.env up --build watcher; else podman compose up --build watcher; fi
 
 # Full backend flow: chain, deploy, watcher.
 local-backend: local-chain deploy-local watcher
