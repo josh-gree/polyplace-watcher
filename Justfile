@@ -9,7 +9,29 @@ local-chain:
 
 # Deploy contracts to local Anvil and write .local/watcher.env.
 deploy-local:
-    uv run python scripts/deploy_local.py
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p .local
+    export POLYPLACE_RPC_URL=http://127.0.0.1:8545
+    export POLYPLACE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+    for _ in $(seq 1 30); do
+        if curl -sf -o /dev/null -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"web3_clientVersion","params":[],"id":1}' \
+            "$POLYPLACE_RPC_URL"; then break; fi
+        sleep 0.2
+    done
+    OUTPUT=$(uv run polyplace-dev deploy --cooldown=30)
+    eval "$(echo "$OUTPUT" | python3 -c 'import json, sys; d = json.load(sys.stdin); [print(f"{k.upper()}_ADDRESS={v}") for k, v in d.items()]')"
+    cat > .local/watcher.env <<EOF
+    WEB3_HTTP_URL=http://anvil:8545
+    WEB3_WS_URL=ws://anvil:8545
+    START_BLOCK=0
+    GRID_ADDRESS=$GRID_ADDRESS
+    TOKEN_ADDRESS=$TOKEN_ADDRESS
+    FAUCET_ADDRESS=$FAUCET_ADDRESS
+    CORS_ORIGINS=http://127.0.0.1:8787,http://localhost:8787
+    EOF
+    cat .local/watcher.env
 
 # Start the watcher, using .local/watcher.env as a Compose override when present.
 watcher:
@@ -21,3 +43,17 @@ local-backend: local-chain deploy-local watcher
 # Tear down local compose services.
 down:
     podman compose down --remove-orphans
+
+# Invoke polyplace-dev CLI with env populated from .local/watcher.env.
+polyplace-dev *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set -a
+    source .local/watcher.env
+    set +a
+    export POLYPLACE_RPC_URL=http://127.0.0.1:8545
+    export POLYPLACE_TOKEN_ADDRESS="$TOKEN_ADDRESS"
+    export POLYPLACE_FAUCET_ADDRESS="$FAUCET_ADDRESS"
+    export POLYPLACE_GRID_ADDRESS="$GRID_ADDRESS"
+    export POLYPLACE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+    uv run polyplace-dev {{ARGS}}

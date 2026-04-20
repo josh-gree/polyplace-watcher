@@ -17,9 +17,6 @@ dependencies = [
     "websockets>=12.0",
 ]
 
-[project.scripts]
-polyplace-dev = "polyplace_watcher.devcli:main"
-
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]
 build-backend = "uv_build"
@@ -29,11 +26,9 @@ polyplace-contracts = { git = "https://github.com/josh-gree/polyplace-contracts.
 
 [dependency-groups]
 dev = [
-    "fire>=0.7.1",
     "httpx>=0.28.1",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
-    "python-dotenv>=1.2.2",
     "web3>=7.15.0",
 ]
 
