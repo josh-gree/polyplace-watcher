@@ -40,6 +40,10 @@ watcher:
 # Full backend flow: chain, deploy, watcher.
 local-backend: local-chain deploy-local watcher
 
+# Run the frontend Worker locally (from ../polyplace-frontend).
+local-frontend:
+    cd ../polyplace-frontend && npm run worker:dev
+
 # Tear down local compose services.
 down:
     podman compose down --remove-orphans
@@ -48,6 +52,10 @@ down:
 polyplace-dev *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ ! -f .local/watcher.env ]; then
+        echo "error: .local/watcher.env not found — run 'just deploy-local' first" >&2
+        exit 1
+    fi
     set -a
     source .local/watcher.env
     set +a
