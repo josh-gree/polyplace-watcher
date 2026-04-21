@@ -31,12 +31,19 @@ just deploy-local
 just watcher
 ```
 
-`just deploy-local` deploys contracts to the host Anvil endpoint
-`http://127.0.0.1:8545` and writes `.local/watcher.env`. The watcher container
-uses that file as a Compose env override when it exists, and connects to Anvil
-through the Compose service name: `http://anvil:8545` and `ws://anvil:8545`.
+`just deploy-local` shells out to the sibling
+[`polyplace-contracts`](../polyplace-contracts) repo and runs the Forge deploy
+script against the host Anvil endpoint `http://127.0.0.1:8545`. It writes the
+Forge deployment manifest to `.local/deployment.json` and derives
+`.local/watcher.env` from it. The watcher container uses that file as a Compose
+env override when it exists, and connects to Anvil through the Compose service
+name: `http://anvil:8545` and `ws://anvil:8545`.
 
-The generated `.local/watcher.env` is local runtime state and is ignored by git.
+If the contracts repo is not present as a sibling, set
+`POLYPLACE_CONTRACTS_REPO` to its repo root before running `just deploy-local`.
+
+The generated `.local/deployment.json` and `.local/watcher.env` are local
+runtime state and are ignored by git.
 
 ## Logging
 

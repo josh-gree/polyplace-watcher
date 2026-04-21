@@ -9,7 +9,7 @@ from typing import AsyncGenerator
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from polyplace_contracts.deploy import Deployment
+from polyplace_watcher.config import WatcherConfig
 from polyplace_watcher.grid_store import GridStore
 from polyplace_watcher.observability import configure_logging
 from polyplace_watcher.watcher import Watcher
@@ -18,15 +18,14 @@ logger = logging.getLogger(__name__)
 
 
 def _watcher_from_env(store: GridStore) -> Watcher:
-    http_url = os.environ["WEB3_HTTP_URL"]
-    ws_url = os.environ["WEB3_WS_URL"]
-    start_block = int(os.environ["START_BLOCK"])
-    deployment = Deployment(
-        grid=os.environ["GRID_ADDRESS"],
-        token=os.environ["TOKEN_ADDRESS"],
-        faucet=os.environ["FAUCET_ADDRESS"],
+    config = WatcherConfig.from_env()
+    return Watcher(
+        http_url=config.http_url,
+        ws_url=config.ws_url,
+        contracts=config.contracts,
+        start_block=config.start_block,
+        store=store,
     )
-    return Watcher(http_url=http_url, ws_url=ws_url, deployment=deployment, start_block=start_block, store=store)
 
 
 async def _snapshot_loop(store: GridStore, path: Path, interval: int) -> None:

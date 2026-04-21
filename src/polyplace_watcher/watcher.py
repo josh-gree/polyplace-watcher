@@ -7,7 +7,7 @@ from web3.types import LogReceipt
 from websockets.exceptions import ConnectionClosed
 
 from polyplace_contracts import PLACE_GRID_ABI
-from polyplace_contracts.deploy import Deployment
+from polyplace_watcher.config import ContractsConfig
 
 from polyplace_watcher.events import CellColorUpdated, CellRented
 from polyplace_watcher.grid_store import GridStore
@@ -31,15 +31,15 @@ class Watcher:
         self,
         http_url: str,
         ws_url: str,
-        deployment: Deployment,
+        contracts: ContractsConfig,
         start_block: int = 0,
         store: GridStore | None = None,
     ) -> None:
         self.store = store if store is not None else GridStore()
         self._w3 = Web3(Web3.HTTPProvider(http_url))
         self._ws_url = ws_url
-        self._contract = self._w3.eth.contract(address=deployment.grid, abi=PLACE_GRID_ABI)
-        self._deployment = deployment
+        self._contract = self._w3.eth.contract(address=contracts.grid, abi=PLACE_GRID_ABI)
+        self._contracts = contracts
         self._start_block: int = start_block
         self._ws_w3: AsyncWeb3 | None = None
         logger.info(
@@ -49,9 +49,9 @@ class Watcher:
                 "config": {
                     "WEB3_HTTP_URL": scrub_url(http_url),
                     "WEB3_WS_URL": scrub_url(ws_url),
-                    "GRID_ADDRESS": deployment.grid,
-                    "TOKEN_ADDRESS": deployment.token,
-                    "FAUCET_ADDRESS": deployment.faucet,
+                    "GRID_ADDRESS": contracts.grid,
+                    "TOKEN_ADDRESS": contracts.token,
+                    "FAUCET_ADDRESS": contracts.faucet,
                     "START_BLOCK": start_block,
                 },
             },
@@ -77,7 +77,7 @@ class Watcher:
             },
         )
         logs = self._w3.eth.get_logs({
-            "address": self._deployment.grid,
+            "address": self._contracts.grid,
             "fromBlock": from_block,
             "toBlock": "latest",
             "topics": [[_CELL_RENTED_TOPIC, _CELL_COLOR_UPDATED_TOPIC]],
@@ -120,7 +120,7 @@ class Watcher:
                         },
                     )
                     await w3.eth.subscribe("logs", {
-                        "address": self._deployment.grid,
+                        "address": self._contracts.grid,
                         "topics": [[_CELL_RENTED_TOPIC, _CELL_COLOR_UPDATED_TOPIC]],
                     })
                     logger.info(
