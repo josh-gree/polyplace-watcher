@@ -36,6 +36,8 @@ def _rpc(w3: Web3, method: str, params: list[object]) -> object:
 @dataclass
 class _DeploymentState:
     deployment: ForgeDeployment
+    # Each anvil_revert consumes the snapshot it reverts to, so tests must
+    # immediately take and store a fresh snapshot for the next test.
     snapshot_id: object
 
 

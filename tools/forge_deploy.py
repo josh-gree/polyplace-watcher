@@ -22,6 +22,10 @@ class ForgeDeployment(ContractsConfig):
     rent_price: int
     rent_duration: int
 
+    @classmethod
+    def from_env(cls) -> "ForgeDeployment":
+        raise RuntimeError("ForgeDeployment cannot be constructed from env; use load_forge_deployment().")
+
 
 def contracts_repo_root() -> Path:
     override = os.environ.get("POLYPLACE_CONTRACTS_REPO")
@@ -33,6 +37,7 @@ def contracts_repo_root() -> Path:
     if not root.is_dir():
         raise RuntimeError(
             "Cannot find sibling polyplace-contracts repo. "
+            f"Tried: {root}. "
             "Set POLYPLACE_CONTRACTS_REPO to the repo root if it lives elsewhere."
         )
 
@@ -113,9 +118,11 @@ def deploy_via_forge(
     if not forge_output_path.is_file():
         raise RuntimeError(f"Forge deploy did not write manifest: {forge_output_path}")
 
-    output_path.write_text(forge_output_path.read_text())
-
-    return load_forge_deployment(output_path)
+    try:
+        output_path.write_text(forge_output_path.read_text())
+        return load_forge_deployment(output_path)
+    finally:
+        forge_output_path.unlink(missing_ok=True)
 
 
 def _parse_args() -> argparse.Namespace:
