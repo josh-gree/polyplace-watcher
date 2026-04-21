@@ -28,7 +28,7 @@ def contracts_repo_root() -> Path:
     if override:
         root = Path(override).expanduser().resolve()
     else:
-        root = Path(__file__).resolve().parents[3] / "polyplace-contracts"
+        root = Path(__file__).resolve().parents[2] / "polyplace-contracts"
 
     if not root.is_dir():
         raise RuntimeError(

@@ -8,7 +8,7 @@ from eth_account import Account
 from web3 import Web3
 from web3.types import TxReceipt
 
-from polyplace_watcher.forge_deploy import ForgeDeployment, deploy_via_forge
+from tools.forge_deploy import ForgeDeployment, deploy_via_forge
 
 # First default anvil account private key
 _DEPLOYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"

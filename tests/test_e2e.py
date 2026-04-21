@@ -7,7 +7,7 @@ from web3 import Web3
 from polyplace_contracts import PLACE_FAUCET_ABI, PLACE_GRID_ABI, PLACE_TOKEN_ABI
 from polyplace_watcher.app import app, lifespan
 from polyplace_watcher.events import RGB
-from polyplace_watcher.forge_deploy import ForgeDeployment
+from tools.forge_deploy import ForgeDeployment
 from polyplace_watcher.grid import Grid
 
 from conftest import _DEPLOYER_KEY, send_tx

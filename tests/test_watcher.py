@@ -8,7 +8,7 @@ from web3 import Web3
 
 from polyplace_contracts import PLACE_FAUCET_ABI, PLACE_GRID_ABI, PLACE_TOKEN_ABI
 from polyplace_watcher.events import CellColorUpdated, RGB
-from polyplace_watcher.forge_deploy import ForgeDeployment
+from tools.forge_deploy import ForgeDeployment
 import polyplace_watcher.watcher as watcher_module
 from polyplace_watcher.watcher import Watcher
 

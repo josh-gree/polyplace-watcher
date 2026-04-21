@@ -5,7 +5,7 @@ from polyplace_contracts import (
     PLACE_GRID_ABI,
     PLACE_TOKEN_ABI,
 )
-from polyplace_watcher.forge_deploy import ForgeDeployment
+from tools.forge_deploy import ForgeDeployment
 
 
 def test_token_metadata(w3: Web3, deployed_contracts: ForgeDeployment) -> None:

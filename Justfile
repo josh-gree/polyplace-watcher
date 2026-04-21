@@ -21,7 +21,7 @@ deploy-local:
             "$POLYPLACE_RPC_URL"; then break; fi
         sleep 0.2
     done
-    OUTPUT=$(uv run python -m polyplace_watcher.forge_deploy \
+    OUTPUT=$(uv run python -m tools.forge_deploy \
         --rpc-url "$POLYPLACE_RPC_URL" \
         --private-key "$POLYPLACE_PRIVATE_KEY" \
         --manifest-path "$MANIFEST_PATH" \
