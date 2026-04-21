@@ -74,13 +74,14 @@ def deploy_via_forge(
     contracts_root = Path(repo_root).resolve() if repo_root is not None else contracts_repo_root()
     output_path = Path(manifest_path).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    forge_output_dir = contracts_root / ".forge-manifests"
+    relative_forge_output_path = Path(".forge-manifests") / f"{output_path.stem}-{uuid4().hex}.json"
+    forge_output_dir = contracts_root / relative_forge_output_path.parent
     forge_output_dir.mkdir(parents=True, exist_ok=True)
-    forge_output_path = forge_output_dir / f"{output_path.stem}-{uuid4().hex}.json"
+    forge_output_path = contracts_root / relative_forge_output_path
 
     env = os.environ.copy()
     env["PRIVATE_KEY"] = private_key
-    env["POLYPLACE_DEPLOYMENT_MANIFEST_PATH"] = str(forge_output_path)
+    env["POLYPLACE_DEPLOYMENT_MANIFEST_PATH"] = relative_forge_output_path.as_posix()
     if claim_amount is not None:
         env["POLYPLACE_DEPLOY_CLAIM_AMOUNT"] = str(claim_amount)
     if cooldown is not None:
