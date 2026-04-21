@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from polyplace_contracts.deploy import Deployment
+from polyplace_watcher.config import ContractsConfig
 
 
-@dataclass
-class ForgeDeployment(Deployment):
+@dataclass(frozen=True)
+class ForgeDeployment(ContractsConfig):
     chain_id: int
     deployer: str
     initial_supply: int
