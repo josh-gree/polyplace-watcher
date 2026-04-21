@@ -5,9 +5,9 @@ from httpx import ASGITransport, AsyncClient
 from web3 import Web3
 
 from polyplace_contracts import PLACE_FAUCET_ABI, PLACE_GRID_ABI, PLACE_TOKEN_ABI
-from polyplace_contracts.deploy import DEPLOY_RENT_PRICE, Deployment
 from polyplace_watcher.app import app, lifespan
 from polyplace_watcher.events import RGB
+from polyplace_watcher.forge_deploy import ForgeDeployment
 from polyplace_watcher.grid import Grid
 
 from conftest import _DEPLOYER_KEY, send_tx
@@ -28,7 +28,7 @@ async def test_e2e_grid_endpoint(
     w3: Web3,
     http_url: str,
     ws_url: str,
-    deployed_contracts: Deployment,
+    deployed_contracts: ForgeDeployment,
     tmp_path,
 ) -> None:
     monkeypatch.setenv("WEB3_HTTP_URL", http_url)
@@ -45,7 +45,7 @@ async def test_e2e_grid_endpoint(
     grid_contract = w3.eth.contract(address=deployed_contracts.grid, abi=PLACE_GRID_ABI)
 
     send_tx(w3, faucet.functions.claim(), _DEPLOYER_KEY)
-    send_tx(w3, token.functions.approve(deployed_contracts.grid, DEPLOY_RENT_PRICE * 2), _DEPLOYER_KEY)
+    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.rent_price * 2), _DEPLOYER_KEY)
 
     async with lifespan(app):
         store = app.state.store
