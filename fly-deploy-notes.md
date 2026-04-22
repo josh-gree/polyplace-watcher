@@ -199,7 +199,6 @@ Carrying over from the first run:
 - `scripts/fund.py` (new).
 - `scripts/paint_random.py` — `--count` flag, funding removed, hardcoded gas.
 - `fly.toml` — health check on `/health`, 256MB.
-- `.github/workflows/fly-deploy.yml` — overwritten by `fly launch --yes`. Not used by us; the `FLY_API_TOKEN` secret was re-added to the repo by fly launch.
 
 ---
 
@@ -244,5 +243,5 @@ fly volume create watcher_data --size 1 --region lhr --yes -a polyplace-watcher
 - [x] Chunked backfill in `src/polyplace_watcher/watcher.py` — single `eth_getLogs` from `START_BLOCK` to `"latest"` hung against Infura for a ~1M-block range. `Watcher._backfill` now pins the upper bound via `eth_blockNumber` and iterates in `BACKFILL_CHUNK_SIZE` (default 10_000) slices, yielding events so `store.last_block` advances during catch-up.
 - [x] `fly deploy` with chunked backfill and watch `/app/logs/polyplace-watcher.log` for `watcher_backfill_chunk` progress. Verified: 5 chunks processed in ~1s, 15 events applied, `last_block=37045693`, snapshot persisted to `/data/snapshot.json`.
 - [x] Watch `/health` — `last_block` should climb from `37040516` toward current head. Verified: `{"last_block":37045693,"last_log_index":0}`.
-- [ ] Once green, merge `flyio` → `main`. CI (`.github/workflows/fly-deploy.yml`) will then redeploy on every push.
+- [ ] Once green, merge `flyio` → `main`. Deploys are manual via `fly deploy -a polyplace-watcher --remote-only` (no CI workflow).
 
