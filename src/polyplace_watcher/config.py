@@ -32,6 +32,7 @@ class WatcherConfig:
     ws_url: str
     start_block: int
     contracts: ContractsConfig
+    backfill_chunk_size: int = 10_000
 
     @classmethod
     def from_env(cls) -> "WatcherConfig":
@@ -40,4 +41,5 @@ class WatcherConfig:
             ws_url=_require("WEB3_WS_URL"),
             start_block=int(_require("START_BLOCK")),
             contracts=ContractsConfig.from_env(),
+            backfill_chunk_size=int(os.environ.get("BACKFILL_CHUNK_SIZE", "10000")),
         )

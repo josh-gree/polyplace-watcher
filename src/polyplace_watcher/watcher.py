@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from typing import AsyncIterator
 
 from web3 import AsyncWeb3, Web3
 from web3.exceptions import PersistentConnectionError
@@ -34,13 +35,17 @@ class Watcher:
         contracts: ContractsConfig,
         start_block: int = 0,
         store: GridStore | None = None,
+        backfill_chunk_size: int = 10_000,
     ) -> None:
+        if backfill_chunk_size <= 0:
+            raise ValueError(f"backfill_chunk_size must be positive, got {backfill_chunk_size}")
         self.store = store if store is not None else GridStore()
         self._w3 = Web3(Web3.HTTPProvider(http_url))
         self._ws_url = ws_url
         self._contract = self._w3.eth.contract(address=contracts.grid, abi=PLACE_GRID_ABI)
         self._contracts = contracts
         self._start_block: int = start_block
+        self._backfill_chunk_size = backfill_chunk_size
         self._ws_w3: AsyncWeb3 | None = None
         logger.info(
             "watcher_initialized",
@@ -53,6 +58,7 @@ class Watcher:
                     "TOKEN_ADDRESS": contracts.token,
                     "FAUCET_ADDRESS": contracts.faucet,
                     "START_BLOCK": start_block,
+                    "BACKFILL_CHUNK_SIZE": backfill_chunk_size,
                 },
             },
         )
@@ -67,19 +73,21 @@ class Watcher:
             return CellColorUpdated(cell_id=args["cellId"], renter=args["renter"], color=args["color"])
         return None
 
-    def fetch_logs(self, from_block: int) -> list[tuple[CellRented | CellColorUpdated, int, int]]:
+    def fetch_logs(
+        self, from_block: int, to_block: int
+    ) -> list[tuple[CellRented | CellColorUpdated, int, int]]:
         logger.debug(
             "watcher_fetch_logs_started",
             extra={
                 "component": "watcher",
                 "from_block": from_block,
-                "to_block": "latest",
+                "to_block": to_block,
             },
         )
         logs = self._w3.eth.get_logs({
             "address": self._contracts.grid,
             "fromBlock": from_block,
-            "toBlock": "latest",
+            "toBlock": to_block,
             "topics": [[_CELL_RENTED_TOPIC, _CELL_COLOR_UPDATED_TOPIC]],
         })
         result = []
@@ -92,11 +100,38 @@ class Watcher:
             extra={
                 "component": "watcher",
                 "from_block": from_block,
-                "to_block": "latest",
+                "to_block": to_block,
                 "log_count": len(result),
             },
         )
         return result
+
+    def _current_head(self) -> int:
+        return self._w3.eth.block_number
+
+    async def _backfill(
+        self, from_block: int
+    ) -> AsyncIterator[tuple[CellRented | CellColorUpdated, int, int]]:
+        head = await asyncio.to_thread(self._current_head)
+        if from_block > head:
+            return
+        cursor = from_block
+        while cursor <= head:
+            chunk_end = min(cursor + self._backfill_chunk_size - 1, head)
+            chunk = await asyncio.to_thread(self.fetch_logs, cursor, chunk_end)
+            logger.info(
+                "watcher_backfill_chunk",
+                extra={
+                    "component": "watcher",
+                    "from_block": cursor,
+                    "to_block": chunk_end,
+                    "head": head,
+                    "log_count": len(chunk),
+                },
+            )
+            for item in chunk:
+                yield item
+            cursor = chunk_end + 1
 
     async def watch(self) -> None:
         connection_attempt = 0
@@ -138,15 +173,16 @@ class Watcher:
                             "from_block": from_block,
                         },
                     )
-                    backfill = await asyncio.to_thread(self.fetch_logs, from_block)
-                    for event, block, log_index in backfill:
+                    backfill_count = 0
+                    async for event, block, log_index in self._backfill(from_block):
                         self.store.apply(event, block, log_index)
+                        backfill_count += 1
                     logger.info(
                         "watcher_backfill_finished",
                         extra={
                             "component": "watcher",
                             "from_block": from_block,
-                            "log_count": len(backfill),
+                            "log_count": backfill_count,
                             "last_block": self.store.last_block,
                             "last_log_index": self.store.last_log_index,
                         },
