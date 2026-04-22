@@ -200,3 +200,49 @@ Carrying over from the first run:
 - `scripts/paint_random.py` — `--count` flag, funding removed, hardcoded gas.
 - `fly.toml` — health check on `/health`, 256MB.
 - `.github/workflows/fly-deploy.yml` — overwritten by `fly launch --yes`. Not used by us; the `FLY_API_TOKEN` secret was re-added to the repo by fly launch.
+
+---
+
+# Amoy deployment (2026-04-22)
+
+## Goal
+
+Deploy the watcher against the real Amoy testnet (chain `80002`) via Infura, with snapshot persistence on a Fly volume so restarts don't re-scan from block 0.
+
+## Source of truth for addresses
+
+`polyplace-contracts/deployments/amoy/2026-04-21-initial.json` — all three contracts deployed in block `0x2353184` = `37040516`.
+
+| Secret | Value |
+|---|---|
+| `TOKEN_ADDRESS` | `0xe3adc914450953af784337120cf133c1c011414d` |
+| `FAUCET_ADDRESS` | `0x8e5af8fdcef97be0821e7ee6493964dda7e07c59` |
+| `GRID_ADDRESS` | `0xc0afc54f12cfb863ca6612bf79826410c9588fbc` |
+| `START_BLOCK` | `37040516` |
+| `WEB3_HTTP_URL` | `https://polygon-amoy.infura.io/v3/<KEY>` |
+| `WEB3_WS_URL` | `wss://polygon-amoy.infura.io/ws/v3/<KEY>` |
+
+## Repo changes (on `flyio` branch, rebased on `main`)
+
+- `fly.toml` — added `[env] SNAPSHOT_PATH = '/data/snapshot.json'` and `[mounts] source = 'watcher_data', destination = '/data'`.
+- No other code changes needed. `src/polyplace_watcher/config.py` already reads `WEB3_HTTP_URL` / `WEB3_WS_URL` / `START_BLOCK` / `{TOKEN,FAUCET,GRID}_ADDRESS` from env.
+
+## Commands run
+
+```sh
+# App (previous trial destroyed it) and 1GB volume in lhr:
+fly apps create polyplace-watcher
+fly volume create watcher_data --size 1 --region lhr --yes -a polyplace-watcher
+# → vol_491k5wqok92o2y5r, encrypted, scheduled snapshots on.
+```
+
+## Still to do
+
+- [x] `fly secrets set` with the Amoy addresses + Infura URLs above. (All 6 staged; shown via `fly secrets list -a polyplace-watcher`.)
+- [x] `fly deploy` from `flyio` branch (manual, one-shot) to verify Amoy e2e. (First deploy will apply the staged secrets automatically.)
+- [x] Checksum-address fix in `src/polyplace_watcher/config.py` so forge-generated lowercase addresses don't crash `web3.py`.
+- [x] Chunked backfill in `src/polyplace_watcher/watcher.py` — single `eth_getLogs` from `START_BLOCK` to `"latest"` hung against Infura for a ~1M-block range. `Watcher._backfill` now pins the upper bound via `eth_blockNumber` and iterates in `BACKFILL_CHUNK_SIZE` (default 10_000) slices, yielding events so `store.last_block` advances during catch-up.
+- [x] `fly deploy` with chunked backfill and watch `/app/logs/polyplace-watcher.log` for `watcher_backfill_chunk` progress. Verified: 5 chunks processed in ~1s, 15 events applied, `last_block=37045693`, snapshot persisted to `/data/snapshot.json`.
+- [x] Watch `/health` — `last_block` should climb from `37040516` toward current head. Verified: `{"last_block":37045693,"last_log_index":0}`.
+- [ ] Once green, merge `flyio` → `main`. CI (`.github/workflows/fly-deploy.yml`) will then redeploy on every push.
+
