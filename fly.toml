@@ -10,6 +10,7 @@ primary_region = 'lhr'
 
 [env]
   SNAPSHOT_PATH = '/data/snapshot.json'
+  CORS_ORIGINS = 'https://polyplace-frontend.joshuadouglasgreenhalgh.workers.dev'
 
 [mounts]
   source = 'watcher_data'
