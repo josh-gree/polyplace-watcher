@@ -14,6 +14,8 @@ from polyplace_watcher.config import ContractsConfig
 
 @dataclass(frozen=True)
 class ForgeDeployment(ContractsConfig):
+    token: str
+    faucet: str
     chain_id: int
     deployer: str
     initial_supply: int

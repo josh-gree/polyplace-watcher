@@ -19,15 +19,11 @@ def _require_address(name: str) -> str:
 
 @dataclass(frozen=True)
 class ContractsConfig:
-    token: str
-    faucet: str
     grid: str
 
     @classmethod
     def from_env(cls) -> "ContractsConfig":
         return cls(
-            token=_require_address("TOKEN_ADDRESS"),
-            faucet=_require_address("FAUCET_ADDRESS"),
             grid=_require_address("GRID_ADDRESS"),
         )
 

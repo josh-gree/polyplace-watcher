@@ -55,8 +55,6 @@ class Watcher:
                     "WEB3_HTTP_URL": scrub_url(http_url),
                     "WEB3_WS_URL": scrub_url(ws_url),
                     "GRID_ADDRESS": contracts.grid,
-                    "TOKEN_ADDRESS": contracts.token,
-                    "FAUCET_ADDRESS": contracts.faucet,
                     "START_BLOCK": start_block,
                     "BACKFILL_CHUNK_SIZE": backfill_chunk_size,
                 },

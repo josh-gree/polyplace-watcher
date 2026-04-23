@@ -34,8 +34,6 @@ async def test_e2e_grid_endpoint(
     monkeypatch.setenv("WEB3_HTTP_URL", http_url)
     monkeypatch.setenv("WEB3_WS_URL", ws_url)
     monkeypatch.setenv("GRID_ADDRESS", deployed_contracts.grid)
-    monkeypatch.setenv("TOKEN_ADDRESS", deployed_contracts.token)
-    monkeypatch.setenv("FAUCET_ADDRESS", deployed_contracts.faucet)
     monkeypatch.setenv("SNAPSHOT_PATH", str(tmp_path / "snap.json"))
     monkeypatch.setenv("SNAPSHOT_INTERVAL", "3600")
     monkeypatch.setenv("START_BLOCK", "0")

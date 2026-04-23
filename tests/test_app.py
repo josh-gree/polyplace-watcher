@@ -129,12 +129,13 @@ def test_watcher_from_env_uses_start_block(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("WEB3_WS_URL", "ws://localhost:8545")
     monkeypatch.setenv("START_BLOCK", "12345")
     monkeypatch.setenv("GRID_ADDRESS", "0x" + "01" * 20)
-    monkeypatch.setenv("TOKEN_ADDRESS", "0x" + "02" * 20)
-    monkeypatch.setenv("FAUCET_ADDRESS", "0x" + "03" * 20)
+    monkeypatch.setenv("TOKEN_ADDRESS", "not-needed")
+    monkeypatch.setenv("FAUCET_ADDRESS", "not-needed")
 
     from polyplace_watcher.app import _watcher_from_env
     watcher = _watcher_from_env(GridStore())
     assert watcher._start_block == 12345
+    assert watcher._contracts.grid == "0x" + "01" * 20
 
 
 # --- snapshot loop ---
