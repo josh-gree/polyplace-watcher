@@ -1,5 +1,7 @@
 # polyplace-watcher
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/josh-gree/polyplace-watcher)
+
 ## Frontend
 
 This service only exposes the watcher API and WebSocket endpoints. It does not
