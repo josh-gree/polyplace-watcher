@@ -25,6 +25,7 @@ def _watcher_from_env(store: GridStore) -> Watcher:
         contracts=config.contracts,
         start_block=config.start_block,
         store=store,
+        backfill_chunk_size=config.backfill_chunk_size,
     )
 
 

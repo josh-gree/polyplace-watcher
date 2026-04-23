@@ -1,0 +1,38 @@
+# fly.toml app configuration file generated for polyplace-watcher on 2026-04-17T17:57:06+01:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'polyplace-watcher'
+primary_region = 'lhr'
+
+[build]
+
+[env]
+  SNAPSHOT_PATH = '/data/snapshot.json'
+
+[mounts]
+  source = 'watcher_data'
+  destination = '/data'
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  [[http_service.checks]]
+    interval = '15s'
+    timeout = '5s'
+    grace_period = '30s'
+    method = 'GET'
+    path = '/health'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256

@@ -17,3 +17,5 @@ RUN uv sync --frozen --no-install-project
 # Copy source and install the project itself
 COPY . .
 RUN uv sync --frozen
+
+CMD ["uv", "run", "uvicorn", "polyplace_watcher.app:app", "--host", "0.0.0.0", "--port", "8000"]

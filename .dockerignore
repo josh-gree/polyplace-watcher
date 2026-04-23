@@ -7,3 +7,4 @@ logs/
 snapshot.json
 .env.local
 .local/
+fly.toml
