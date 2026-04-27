@@ -77,12 +77,17 @@ a deploy. It can also be run manually via `workflow_dispatch`.
 The `deploy` job:
 
 1. Checks out the exact SHA that CI tested.
-2. Runs `flyctl deploy --remote-only`, which builds the image on Fly's remote
-   builder using this repo's `Dockerfile` and `fly.toml`.
-3. Hits `https://polyplace-watcher.fly.dev/health` and `/grid` as smoke
-   checks. `/health` must return JSON containing `last_block` and
-   `last_log_index` keys (values may be `null` immediately after a fresh
-   deploy, before backfill catches up). `/grid` must return
+2. Runs `flyctl deploy --remote-only --build-arg GIT_SHA=<sha>`, which builds
+   the image on Fly's remote builder using this repo's `Dockerfile` and
+   `fly.toml`. The build-arg pins the deploy SHA into the image as the
+   `POLYPLACE_GIT_SHA` env var.
+3. Polls `/health` until the served `git_sha` field equals the SHA we just
+   deployed (120s deadline), then asserts the rest of the response shape.
+   The SHA pin is what makes the smoke meaningful: without it the check
+   could pass against the previous release during the brief window before
+   edge routing fully cuts over. `/health` must also contain `last_block`
+   and `last_log_index` keys (values may be `null` immediately after a
+   fresh deploy, before backfill catches up). `/grid` must return
    `application/octet-stream` with a non-empty body.
 4. If the deploy step succeeded but the smoke checks failed, the workflow
    runs `flyctl releases rollback -y` to revert to the previous release. The
