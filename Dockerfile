@@ -18,4 +18,9 @@ RUN uv sync --frozen --no-install-project
 COPY . .
 RUN uv sync --frozen
 
+# Bake the build-time git SHA into the image so /health and startup logs
+# can report which release is serving. Defaults to "unknown" for local builds.
+ARG GIT_SHA=unknown
+ENV POLYPLACE_GIT_SHA=$GIT_SHA
+
 CMD ["uv", "run", "uvicorn", "polyplace_watcher.app:app", "--host", "0.0.0.0", "--port", "8000"]

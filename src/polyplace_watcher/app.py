@@ -16,6 +16,8 @@ from polyplace_watcher.watcher import Watcher
 
 logger = logging.getLogger(__name__)
 
+GIT_SHA = os.environ.get("POLYPLACE_GIT_SHA", "unknown")
+
 
 def _watcher_from_env(store: GridStore) -> Watcher:
     config = WatcherConfig.from_env()
@@ -56,6 +58,7 @@ async def _snapshot_loop(store: GridStore, path: Path, interval: int) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     configure_logging()
+    logger.info("service_starting", extra={"component": "app", "git_sha": GIT_SHA})
     store = GridStore()
     snapshot_path = Path(os.environ.get("SNAPSHOT_PATH", "snapshot.json"))
     snapshot_interval = int(os.environ.get("SNAPSHOT_INTERVAL", "60"))
@@ -108,9 +111,13 @@ app.add_middleware(
 
 
 @app.get("/health")
-async def get_health(request: Request) -> dict[str, int | None]:
+async def get_health(request: Request) -> dict[str, int | str | None]:
     store: GridStore = request.app.state.store
-    return {"last_block": store.last_block, "last_log_index": store.last_log_index}
+    return {
+        "last_block": store.last_block,
+        "last_log_index": store.last_log_index,
+        "git_sha": GIT_SHA,
+    }
 
 
 @app.get("/grid")
