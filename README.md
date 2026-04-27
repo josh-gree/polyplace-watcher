@@ -47,6 +47,26 @@ If the contracts repo is not present as a sibling, set
 The generated `.local/deployment.json` and `.local/watcher.env` are local
 runtime state and are ignored by git.
 
+## Continuous Integration
+
+GitHub Actions runs on every push to `main` and on every pull request. The
+workflow lives at `.github/workflows/ci.yml` and has two jobs:
+
+- `test` checks out this repo and `polyplace-contracts` as siblings, installs
+  Foundry (pinned to `stable`) and `uv`, then runs `uv sync --frozen` and
+  `uv run pytest`. The pytest suite spawns a local Anvil and deploys contracts
+  via `forge script`, so both Foundry and the contracts repo are required.
+- `docker-build` builds the production `Dockerfile` with Buildx and a GHA
+  layer cache. The image is not pushed.
+
+Local equivalents:
+
+```sh
+uv sync --frozen
+uv run pytest        # needs `anvil` on PATH and ../polyplace-contracts checked out
+podman build .
+```
+
 ## Logging
 
 The service emits structured JSON logs to stdout and `logs/polyplace-watcher.log`.

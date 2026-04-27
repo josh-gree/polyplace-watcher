@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    env:
+      POLYPLACE_CONTRACTS_REPO: ${{ github.workspace }}/polyplace-contracts
+    steps:
+      - name: Checkout watcher
+        uses: actions/checkout@v4
+        with:
+          path: polyplace-watcher
+
+      - name: Checkout polyplace-contracts
+        uses: actions/checkout@v4
+        with:
+          repository: josh-gree/polyplace-contracts
+          ref: main
+          path: polyplace-contracts
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: polyplace-watcher/uv.lock
+
+      - name: uv sync --frozen
+        working-directory: polyplace-watcher
+        run: uv sync --frozen
+
+      - name: uv run pytest
+        working-directory: polyplace-watcher
+        run: uv run pytest
+
+  docker-build:
+    name: docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
