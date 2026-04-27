@@ -67,6 +67,62 @@ uv run pytest        # needs `anvil` on PATH and ../polyplace-contracts checked 
 podman build .
 ```
 
+## Continuous Deployment
+
+Merges to `main` are deployed to Fly.io automatically. The workflow lives at
+`.github/workflows/deploy.yml` and is triggered via `workflow_run` after the
+`CI` workflow finishes successfully on `main`, so a red CI run never produces
+a deploy. It can also be run manually via `workflow_dispatch`.
+
+The `deploy` job:
+
+1. Checks out the exact SHA that CI tested.
+2. Runs `flyctl deploy --remote-only`, which builds the image on Fly's remote
+   builder using this repo's `Dockerfile` and `fly.toml`.
+3. Hits `https://polyplace-watcher.fly.dev/health` and `/grid` as smoke
+   checks. `/health` must return JSON containing `last_block` and
+   `last_log_index` keys (values may be `null` immediately after a fresh
+   deploy, before backfill catches up). `/grid` must return
+   `application/octet-stream` with a non-empty body.
+4. If the deploy step succeeded but the smoke checks failed, the workflow
+   runs `flyctl releases rollback -y` to revert to the previous release. The
+   job still fails so the alert fires; the rollback just shrinks the window
+   of brokenness.
+
+Concurrency is set to `deploy-watcher` with `cancel-in-progress: false`, so
+deploys queue rather than cancel each other mid-flight.
+
+### Caveats of auto-rollback
+
+`flyctl releases rollback` reverts the *image*, not the volume. If a bad
+release wrote a corrupted `snapshot.json`, the rolled-back binary will load
+the same bad snapshot. Manual remediation (delete the snapshot or restore a
+known-good copy) is still required in that case. None of the current code
+paths overwrite the snapshot in a way that would corrupt it on startup, but
+worth knowing.
+
+### Secrets
+
+GitHub Actions only needs one secret:
+
+- `FLY_API_TOKEN` — a deploy-scoped Fly token. Mint with
+  `fly tokens create deploy --expiry 8760h` and store under
+  *Settings → Secrets and variables → Actions*. Rotate by minting a new
+  token and replacing the secret; the old token can be revoked with
+  `fly tokens revoke <id>` (look up the id with `fly tokens list`).
+
+All runtime secrets live in Fly, **not** in GitHub. They are managed with
+`fly secrets set` / `fly secrets list` and are never referenced by the
+workflow. The watcher reads at startup:
+
+- `WEB3_HTTP_URL` — JSON-RPC HTTP endpoint for historical backfill.
+- `WEB3_WS_URL` — JSON-RPC WebSocket endpoint for live log subscription.
+- `START_BLOCK` — block height to start indexing from.
+- `GRID_ADDRESS` — deployed `PlaceGrid` contract address.
+
+Public, non-sensitive runtime config (`SNAPSHOT_PATH`, `CORS_ORIGINS`) is
+kept in `fly.toml` under `[env]` and is checked into the repo.
+
 ## Logging
 
 The service emits structured JSON logs to stdout and `logs/polyplace-watcher.log`.

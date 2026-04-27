@@ -1,0 +1,89 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-watcher
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      WATCHER_HOST: polyplace-watcher.fly.dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        id: deploy
+        run: flyctl deploy --remote-only
+
+      - name: Smoke checks
+        id: smoke
+        run: |
+          set -euo pipefail
+
+          echo "::group::GET /health"
+          health=$(mktemp)
+          curl --fail \
+               --silent \
+               --show-error \
+               --max-time 10 \
+               --retry 10 \
+               --retry-delay 5 \
+               --retry-connrefused \
+               --retry-all-errors \
+               -o "$health" \
+               "https://${WATCHER_HOST}/health"
+          cat "$health"
+          echo
+          jq -e 'has("last_block") and has("last_log_index")' "$health" > /dev/null
+          echo "::endgroup::"
+
+          echo "::group::GET /grid"
+          grid=$(mktemp)
+          headers=$(mktemp)
+          curl --fail \
+               --silent \
+               --show-error \
+               --max-time 30 \
+               --retry 5 \
+               --retry-delay 5 \
+               --retry-all-errors \
+               -D "$headers" \
+               -o "$grid" \
+               "https://${WATCHER_HOST}/grid"
+          size=$(stat -c%s "$grid")
+          echo "grid bytes: $size"
+          if [ "$size" -le 0 ]; then
+            echo "::error::/grid returned empty body"
+            exit 1
+          fi
+          if ! grep -qi '^content-type:.*application/octet-stream' "$headers"; then
+            echo "::error::/grid returned wrong content-type"
+            grep -i '^content-type' "$headers" || true
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      - name: Rollback on smoke failure
+        if: failure() && steps.deploy.outcome == 'success' && steps.smoke.outcome == 'failure'
+        run: |
+          echo "::warning::Smoke checks failed after a successful deploy — rolling back to the previous release"
+          flyctl releases rollback -y
