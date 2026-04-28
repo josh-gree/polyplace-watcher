@@ -5,10 +5,9 @@ from dataclasses import dataclass
 
 import pytest
 from eth_account import Account
+from polyplace_contracts.deploy import Deployment, deploy
 from web3 import Web3
 from web3.types import TxReceipt
-
-from tools.forge_deploy import ForgeDeployment, deploy_via_forge
 
 # First default anvil account private key
 _DEPLOYER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
@@ -35,7 +34,7 @@ def _rpc(w3: Web3, method: str, params: list[object]) -> object:
 
 @dataclass
 class _DeploymentState:
-    deployment: ForgeDeployment
+    deployment: Deployment
     # Each anvil_revert consumes the snapshot it reverts to, so tests must
     # immediately take and store a fresh snapshot for the next test.
     snapshot_id: object
@@ -74,20 +73,15 @@ def w3() -> Iterator[Web3]:
 
 
 @pytest.fixture(scope="session")
-def _deployment_state(w3: Web3, tmp_path_factory: pytest.TempPathFactory) -> _DeploymentState:
+def _deployment_state(w3: Web3) -> _DeploymentState:
     _rpc(w3, "anvil_reset", [])
-    manifest_path = tmp_path_factory.mktemp("forge-deploy") / "deployment.json"
-    deployment = deploy_via_forge(
-        rpc_url=_ANVIL_URL,
-        private_key=_DEPLOYER_KEY,
-        manifest_path=manifest_path,
-    )
+    deployment = deploy(w3, _DEPLOYER_KEY)
     snapshot_id = _rpc(w3, "anvil_snapshot", [])
     return _DeploymentState(deployment=deployment, snapshot_id=snapshot_id)
 
 
 @pytest.fixture
-def deployed_contracts(w3: Web3, _deployment_state: _DeploymentState) -> ForgeDeployment:
+def deployed_contracts(w3: Web3, _deployment_state: _DeploymentState) -> Deployment:
     reverted = _rpc(w3, "anvil_revert", [_deployment_state.snapshot_id])
     if reverted is not True:
         raise RuntimeError(f"anvil_revert returned {reverted!r}")

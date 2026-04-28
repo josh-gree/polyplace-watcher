@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from web3 import Web3
 
 import polyplace_watcher.app as app_module
 from polyplace_watcher.app import _snapshot_loop, app, lifespan
@@ -129,13 +130,11 @@ def test_watcher_from_env_uses_start_block(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("WEB3_WS_URL", "ws://localhost:8545")
     monkeypatch.setenv("START_BLOCK", "12345")
     monkeypatch.setenv("GRID_ADDRESS", "0x" + "01" * 20)
-    monkeypatch.setenv("TOKEN_ADDRESS", "not-needed")
-    monkeypatch.setenv("FAUCET_ADDRESS", "not-needed")
 
     from polyplace_watcher.app import _watcher_from_env
     watcher = _watcher_from_env(GridStore())
     assert watcher._start_block == 12345
-    assert watcher._contracts.grid == "0x" + "01" * 20
+    assert watcher._grid_address == Web3.to_checksum_address("0x" + "01" * 20)
 
 
 # --- snapshot loop ---
