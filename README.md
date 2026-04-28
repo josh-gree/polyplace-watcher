@@ -35,10 +35,12 @@ output into `.local/watcher.env`:
    just local-chain
    ```
 
-2. In `polyplace-contracts`, run the deploy CLI against the host Anvil and
-   capture the env block:
+2. In `polyplace-contracts/packages/python` (where the `polyplace-deploy`
+   entry point is registered), run the deploy CLI against the host Anvil
+   and capture the env block:
 
    ```sh
+   cd ../polyplace-contracts/packages/python
    uv run polyplace-deploy \
      --rpc-url http://127.0.0.1:8545 \
      --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
