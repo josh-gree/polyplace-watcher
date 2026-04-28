@@ -50,14 +50,14 @@ output into `.local/watcher.env`:
 3. Translate the printed `POLYPLACE_*` vars into `.local/watcher.env` —
    `POLYPLACE_GRID_ADDRESS` becomes `GRID_ADDRESS`, `POLYPLACE_TOKEN_ADDRESS`
    becomes `TOKEN_ADDRESS`, `POLYPLACE_FAUCET_ADDRESS` becomes
-   `FAUCET_ADDRESS`, and add `WEB3_HTTP_URL`, `WEB3_WS_URL`, `START_BLOCK`,
-   `CORS_ORIGINS` by hand. Example:
+   `FAUCET_ADDRESS`, `POLYPLACE_START_BLOCK` becomes `START_BLOCK`, and add
+   `WEB3_HTTP_URL`, `WEB3_WS_URL`, `CORS_ORIGINS` by hand. Example:
 
    ```sh
    cat > .local/watcher.env <<EOF
    WEB3_HTTP_URL=http://anvil:8545
    WEB3_WS_URL=ws://anvil:8545
-   START_BLOCK=0
+   START_BLOCK=<value of POLYPLACE_START_BLOCK>
    GRID_ADDRESS=0x...
    TOKEN_ADDRESS=0x...
    FAUCET_ADDRESS=0x...
