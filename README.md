@@ -24,38 +24,66 @@ podman compose up anvil watcher
 ```
 
 Compose includes deterministic contract address defaults for a fresh Anvil
-deployment. To deploy contracts first and have the watcher use the generated
-runtime config:
+deployment. To deploy contracts yourself and have the watcher use the
+resulting addresses, run the deploy CLI from the
+[`polyplace-contracts`](../polyplace-contracts) repo and translate its env
+output into `.local/watcher.env`:
 
-```sh
-just local-chain
-just deploy-local
-just watcher
-```
+1. Start Anvil:
 
-`just deploy-local` shells out to the sibling
-[`polyplace-contracts`](../polyplace-contracts) repo and runs the Forge deploy
-script against the host Anvil endpoint `http://127.0.0.1:8545`. It writes the
-Forge deployment manifest to `.local/deployment.json` and derives
-`.local/watcher.env` from it. The watcher container uses that file as a Compose
-env override when it exists, and connects to Anvil through the Compose service
-name: `http://anvil:8545` and `ws://anvil:8545`.
+   ```sh
+   just local-chain
+   ```
 
-If the contracts repo is not present as a sibling, set
-`POLYPLACE_CONTRACTS_REPO` to its repo root before running `just deploy-local`.
+2. In `polyplace-contracts`, run the deploy CLI against the host Anvil and
+   capture the env block:
 
-The generated `.local/deployment.json` and `.local/watcher.env` are local
-runtime state and are ignored by git.
+   ```sh
+   uv run polyplace-deploy \
+     --rpc-url http://127.0.0.1:8545 \
+     --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+     --env-out -
+   ```
+
+3. Translate the printed `POLYPLACE_*` vars into `.local/watcher.env` —
+   `POLYPLACE_GRID_ADDRESS` becomes `GRID_ADDRESS`, `POLYPLACE_TOKEN_ADDRESS`
+   becomes `TOKEN_ADDRESS`, `POLYPLACE_FAUCET_ADDRESS` becomes
+   `FAUCET_ADDRESS`, and add `WEB3_HTTP_URL`, `WEB3_WS_URL`, `START_BLOCK`,
+   `CORS_ORIGINS` by hand. Example:
+
+   ```sh
+   cat > .local/watcher.env <<EOF
+   WEB3_HTTP_URL=http://anvil:8545
+   WEB3_WS_URL=ws://anvil:8545
+   START_BLOCK=0
+   GRID_ADDRESS=0x...
+   TOKEN_ADDRESS=0x...
+   FAUCET_ADDRESS=0x...
+   CORS_ORIGINS=http://127.0.0.1:8787,http://localhost:8787
+   EOF
+   ```
+
+4. Start the watcher, which uses `.local/watcher.env` as a Compose env
+   override when present and connects to Anvil through the Compose service
+   name (`http://anvil:8545` / `ws://anvil:8545`):
+
+   ```sh
+   just watcher
+   ```
+
+The generated `.local/watcher.env` is local runtime state and is ignored by
+git.
 
 ## Continuous Integration
 
 GitHub Actions runs on every push to `main` and on every pull request. The
 workflow lives at `.github/workflows/ci.yml` and has two jobs:
 
-- `test` checks out this repo and `polyplace-contracts` as siblings, installs
-  Foundry (pinned to `stable`) and `uv`, then runs `uv sync --frozen` and
-  `uv run pytest`. The pytest suite spawns a local Anvil and deploys contracts
-  via `forge script`, so both Foundry and the contracts repo are required.
+- `test` checks out this repo, installs Foundry (only for the `anvil` binary)
+  and `uv`, then runs `uv sync --frozen` and `uv run pytest`. The pytest
+  suite spawns a local Anvil and deploys the contracts in-process via the
+  `polyplace_contracts.deploy` Python library, which is pulled in as a git
+  dependency in `pyproject.toml`.
 - `docker-build` builds the production `Dockerfile` with Buildx and a GHA
   layer cache. The image is not pushed.
 
@@ -63,7 +91,7 @@ Local equivalents:
 
 ```sh
 uv sync --frozen
-uv run pytest        # needs `anvil` on PATH and ../polyplace-contracts checked out
+uv run pytest        # needs `anvil` on PATH
 podman build .
 ```
 

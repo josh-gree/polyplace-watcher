@@ -18,22 +18,11 @@ def _require_address(name: str) -> str:
 
 
 @dataclass(frozen=True)
-class ContractsConfig:
-    grid: str
-
-    @classmethod
-    def from_env(cls) -> "ContractsConfig":
-        return cls(
-            grid=_require_address("GRID_ADDRESS"),
-        )
-
-
-@dataclass(frozen=True)
 class WatcherConfig:
     http_url: str
     ws_url: str
     start_block: int
-    contracts: ContractsConfig
+    grid_address: str
     backfill_chunk_size: int = 10_000
 
     @classmethod
@@ -42,6 +31,6 @@ class WatcherConfig:
             http_url=_require("WEB3_HTTP_URL"),
             ws_url=_require("WEB3_WS_URL"),
             start_block=int(_require("START_BLOCK")),
-            contracts=ContractsConfig.from_env(),
+            grid_address=_require_address("GRID_ADDRESS"),
             backfill_chunk_size=int(os.environ.get("BACKFILL_CHUNK_SIZE", "10000")),
         )

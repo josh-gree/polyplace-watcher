@@ -14,23 +14,11 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    env:
-      POLYPLACE_CONTRACTS_REPO: ${{ github.workspace }}/polyplace-contracts
     steps:
       - name: Checkout watcher
         uses: actions/checkout@v4
-        with:
-          path: polyplace-watcher
 
-      - name: Checkout polyplace-contracts
-        uses: actions/checkout@v4
-        with:
-          repository: josh-gree/polyplace-contracts
-          ref: main
-          path: polyplace-contracts
-          submodules: recursive
-
-      - name: Install Foundry
+      - name: Install Foundry (for anvil)
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
@@ -39,14 +27,12 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          cache-dependency-glob: polyplace-watcher/uv.lock
+          cache-dependency-glob: uv.lock
 
       - name: uv sync --frozen
-        working-directory: polyplace-watcher
         run: uv sync --frozen
 
       - name: uv run pytest
-        working-directory: polyplace-watcher
         run: uv run pytest
 
   docker-build:

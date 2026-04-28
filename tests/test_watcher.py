@@ -7,25 +7,25 @@ from eth_account import Account
 from web3 import Web3
 
 from polyplace_contracts import PLACE_FAUCET_ABI, PLACE_GRID_ABI, PLACE_TOKEN_ABI
+from polyplace_contracts.deploy import Deployment
 from polyplace_watcher.events import CellColorUpdated, RGB
-from tools.forge_deploy import ForgeDeployment
 import polyplace_watcher.watcher as watcher_module
 from polyplace_watcher.watcher import Watcher
 
 from conftest import _DEPLOYER_KEY, send_tx
 
 
-def test_watcher_instantiation(http_url: str, ws_url: str, deployed_contracts: ForgeDeployment) -> None:
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+def test_watcher_instantiation(http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     assert watcher.store is not None
 
 
-def test_watcher_store_initially_empty(http_url: str, ws_url: str, deployed_contracts: ForgeDeployment) -> None:
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+def test_watcher_store_initially_empty(http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     assert watcher.store.get(0) is None
 
 
-def test_fetch_logs_populates_store(w3: Web3, http_url: str, ws_url: str, deployed_contracts: ForgeDeployment) -> None:
+def test_fetch_logs_populates_store(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     caller = Account.from_key(_DEPLOYER_KEY)
 
     faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
@@ -33,12 +33,12 @@ def test_fetch_logs_populates_store(w3: Web3, http_url: str, ws_url: str, deploy
     grid = w3.eth.contract(address=deployed_contracts.grid, abi=PLACE_GRID_ABI)
 
     send_tx(w3, faucet.functions.claim(), _DEPLOYER_KEY)
-    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.rent_price), _DEPLOYER_KEY)
+    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.params.rent_price), _DEPLOYER_KEY)
 
     from_block = w3.eth.block_number
     send_tx(w3, grid.functions.rentCell(5, 10, 0xFF8800), _DEPLOYER_KEY)
 
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     for event, block, log_index in watcher.fetch_logs(from_block, w3.eth.block_number):
         watcher.store.apply(event, block, log_index)
 
@@ -49,34 +49,34 @@ def test_fetch_logs_populates_store(w3: Web3, http_url: str, ws_url: str, deploy
     assert cell.color == RGB(r=255, g=136, b=0)
 
 
-def test_fetch_logs_empty_range_leaves_store_empty(w3: Web3, http_url: str, ws_url: str, deployed_contracts: ForgeDeployment) -> None:
+def test_fetch_logs_empty_range_leaves_store_empty(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     from_block = w3.eth.block_number
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     for event, block, log_index in watcher.fetch_logs(from_block, w3.eth.block_number):
         watcher.store.apply(event, block, log_index)
     assert watcher.store.get(0) is None
 
 
-def test_fetch_logs_sets_last_block(w3: Web3, http_url: str, ws_url: str, deployed_contracts: ForgeDeployment) -> None:
+def test_fetch_logs_sets_last_block(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
     token = w3.eth.contract(address=deployed_contracts.token, abi=PLACE_TOKEN_ABI)
     grid = w3.eth.contract(address=deployed_contracts.grid, abi=PLACE_GRID_ABI)
 
     send_tx(w3, faucet.functions.claim(), _DEPLOYER_KEY)
-    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.rent_price), _DEPLOYER_KEY)
+    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.params.rent_price), _DEPLOYER_KEY)
 
     from_block = w3.eth.block_number
     receipt = send_tx(w3, grid.functions.rentCell(1, 1, 0xFF0000), _DEPLOYER_KEY)
 
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     assert watcher.store.last_block is None
     for event, block, log_index in watcher.fetch_logs(from_block, w3.eth.block_number):
         watcher.store.apply(event, block, log_index)
     assert watcher.store.last_block == receipt["blockNumber"]
 
 
-def test_fetch_logs_empty_does_not_change_last_block(w3: Web3, http_url: str, ws_url: str, deployed_contracts: ForgeDeployment) -> None:
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+def test_fetch_logs_empty_does_not_change_last_block(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     watcher.store._last_block = 5
     head = w3.eth.block_number
     for event, block, log_index in watcher.fetch_logs(head, head):
@@ -84,17 +84,17 @@ def test_fetch_logs_empty_does_not_change_last_block(w3: Web3, http_url: str, ws
     assert watcher.store.last_block == 5
 
 
-def test_watcher_rejects_non_positive_chunk_size(http_url: str, ws_url: str, deployed_contracts: ForgeDeployment) -> None:
+def test_watcher_rejects_non_positive_chunk_size(http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     with pytest.raises(ValueError):
-        Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts, backfill_chunk_size=0)
+        Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid, backfill_chunk_size=0)
 
 
 async def test_backfill_chunks_range_across_boundaries(
-    http_url: str, ws_url: str, deployed_contracts: ForgeDeployment
+    http_url: str, ws_url: str, deployed_contracts: Deployment
 ) -> None:
     calls: list[tuple[int, int]] = []
     watcher = Watcher(
-        http_url=http_url, ws_url=ws_url, contracts=deployed_contracts,
+        http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid,
         backfill_chunk_size=3,
     )
     watcher._current_head = lambda: 25  # type: ignore[method-assign]
@@ -107,11 +107,11 @@ async def test_backfill_chunks_range_across_boundaries(
 
 
 async def test_backfill_final_chunk_clipped_to_head(
-    http_url: str, ws_url: str, deployed_contracts: ForgeDeployment
+    http_url: str, ws_url: str, deployed_contracts: Deployment
 ) -> None:
     calls: list[tuple[int, int]] = []
     watcher = Watcher(
-        http_url=http_url, ws_url=ws_url, contracts=deployed_contracts,
+        http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid,
         backfill_chunk_size=10,
     )
     watcher._current_head = lambda: 15  # type: ignore[method-assign]
@@ -124,10 +124,10 @@ async def test_backfill_final_chunk_clipped_to_head(
 
 
 async def test_backfill_empty_range_makes_no_calls(
-    http_url: str, ws_url: str, deployed_contracts: ForgeDeployment
+    http_url: str, ws_url: str, deployed_contracts: Deployment
 ) -> None:
     calls: list[tuple[int, int]] = []
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     watcher._current_head = lambda: 5  # type: ignore[method-assign]
     watcher.fetch_logs = lambda fb, tb: (calls.append((fb, tb)) or [])  # type: ignore[method-assign]
 
@@ -137,18 +137,18 @@ async def test_backfill_empty_range_makes_no_calls(
     assert calls == []
 
 
-async def test_snapshot_round_trip(w3: Web3, http_url: str, ws_url: str, deployed_contracts: ForgeDeployment, tmp_path: Path) -> None:
+async def test_snapshot_round_trip(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment, tmp_path: Path) -> None:
     faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
     token = w3.eth.contract(address=deployed_contracts.token, abi=PLACE_TOKEN_ABI)
     grid = w3.eth.contract(address=deployed_contracts.grid, abi=PLACE_GRID_ABI)
 
     send_tx(w3, faucet.functions.claim(), _DEPLOYER_KEY)
-    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.rent_price), _DEPLOYER_KEY)
+    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.params.rent_price), _DEPLOYER_KEY)
 
     from_block = w3.eth.block_number
     send_tx(w3, grid.functions.rentCell(3, 4, 0x112233), _DEPLOYER_KEY)
 
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     for event, block, log_index in watcher.fetch_logs(from_block, w3.eth.block_number):
         watcher.store.apply(event, block, log_index)
 
@@ -156,7 +156,7 @@ async def test_snapshot_round_trip(w3: Web3, http_url: str, ws_url: str, deploye
     await watcher.store.save_snapshot(snap_path)
 
     cell_id = 4 * 1000 + 3
-    watcher2 = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+    watcher2 = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     assert watcher2.store.get(cell_id) is None
     assert watcher2.store.last_block is None
 
@@ -165,8 +165,8 @@ async def test_snapshot_round_trip(w3: Web3, http_url: str, ws_url: str, deploye
     assert watcher2.store.get(cell_id) == watcher.store.get(cell_id)
 
 
-async def test_save_snapshot_raises_without_last_block(http_url: str, ws_url: str, deployed_contracts: ForgeDeployment, tmp_path: Path) -> None:
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+async def test_save_snapshot_raises_without_last_block(http_url: str, ws_url: str, deployed_contracts: Deployment, tmp_path: Path) -> None:
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     with pytest.raises(ValueError):
         await watcher.store.save_snapshot(tmp_path / "snap.json")
 
@@ -175,7 +175,7 @@ async def test_watch_catches_up_from_loaded_snapshot(
     w3: Web3,
     http_url: str,
     ws_url: str,
-    deployed_contracts: ForgeDeployment,
+    deployed_contracts: Deployment,
     tmp_path: Path,
 ) -> None:
     faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
@@ -183,12 +183,12 @@ async def test_watch_catches_up_from_loaded_snapshot(
     grid = w3.eth.contract(address=deployed_contracts.grid, abi=PLACE_GRID_ABI)
 
     send_tx(w3, faucet.functions.claim(), _DEPLOYER_KEY)
-    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.rent_price * 3), _DEPLOYER_KEY)
+    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.params.rent_price * 3), _DEPLOYER_KEY)
 
     from_block = w3.eth.block_number
     send_tx(w3, grid.functions.rentCell(1, 1, 0xFF0000), _DEPLOYER_KEY)
 
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     for event, block, log_index in watcher.fetch_logs(from_block, w3.eth.block_number):
         watcher.store.apply(event, block, log_index)
     snap_path = tmp_path / "snap.json"
@@ -196,7 +196,7 @@ async def test_watch_catches_up_from_loaded_snapshot(
 
     send_tx(w3, grid.functions.rentCell(2, 2, 0x00FF00), _DEPLOYER_KEY)
 
-    watcher2 = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+    watcher2 = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     watcher2.store.load_snapshot(snap_path)
     watch_task = asyncio.create_task(watcher2.watch())
 
@@ -230,7 +230,7 @@ async def test_watch_catches_up_from_loaded_snapshot(
             await watch_task
 
 
-async def test_watch_reconnects_after_disconnect(w3: Web3, http_url: str, ws_url: str, deployed_contracts: ForgeDeployment) -> None:
+async def test_watch_reconnects_after_disconnect(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     caller = Account.from_key(_DEPLOYER_KEY)
 
     faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
@@ -238,9 +238,9 @@ async def test_watch_reconnects_after_disconnect(w3: Web3, http_url: str, ws_url
     grid = w3.eth.contract(address=deployed_contracts.grid, abi=PLACE_GRID_ABI)
 
     send_tx(w3, faucet.functions.claim(), _DEPLOYER_KEY)
-    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.rent_price * 2), _DEPLOYER_KEY)
+    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.params.rent_price * 2), _DEPLOYER_KEY)
 
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     watch_task = asyncio.create_task(watcher.watch())
 
     for _ in range(20):
@@ -279,7 +279,7 @@ async def test_watch_resubscribes_before_reconnect_backfill(
     monkeypatch: pytest.MonkeyPatch,
     http_url: str,
     ws_url: str,
-    deployed_contracts: ForgeDeployment,
+    deployed_contracts: Deployment,
 ) -> None:
     state = {
         "connection_count": 0,
@@ -323,7 +323,7 @@ async def test_watch_resubscribes_before_reconnect_backfill(
         async def __aexit__(self, *_args: object) -> None:
             state["subscription_active"] = False
 
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     watcher._decode_log = lambda log: CellColorUpdated(cell_id=log["cell_id"], renter="0xabc", color=0x0000FF)  # type: ignore[method-assign]
 
     def fetch_logs(_from_block: int, _to_block: int) -> list:
@@ -353,7 +353,7 @@ async def test_watch_backfills_from_start_block_on_cold_start(
     monkeypatch: pytest.MonkeyPatch,
     http_url: str,
     ws_url: str,
-    deployed_contracts: ForgeDeployment,
+    deployed_contracts: Deployment,
 ) -> None:
     state: dict[str, object] = {"backfill_from_block": None}
 
@@ -381,7 +381,7 @@ async def test_watch_backfills_from_start_block_on_cold_start(
         async def __aexit__(self, *_args: object) -> None:
             pass
 
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts, start_block=50)
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid, start_block=50)
     watcher._decode_log = lambda log: CellColorUpdated(cell_id=log["cell_id"], renter="0xabc", color=0x0000FF)  # type: ignore[method-assign]
 
     def fetch_logs(from_block: int, _to_block: int) -> list:
@@ -408,7 +408,7 @@ async def test_watch_backfills_from_last_block_on_reconnect(
     monkeypatch: pytest.MonkeyPatch,
     http_url: str,
     ws_url: str,
-    deployed_contracts: ForgeDeployment,
+    deployed_contracts: Deployment,
 ) -> None:
     state: dict[str, object] = {"backfill_from_block": None}
 
@@ -436,7 +436,7 @@ async def test_watch_backfills_from_last_block_on_reconnect(
         async def __aexit__(self, *_args: object) -> None:
             pass
 
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts, start_block=50)
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid, start_block=50)
     watcher.store._last_block = 100
     watcher._decode_log = lambda log: CellColorUpdated(cell_id=log["cell_id"], renter="0xabc", color=0x0000FF)  # type: ignore[method-assign]
 
@@ -464,7 +464,7 @@ async def test_watch_fetch_logs_called_via_to_thread(
     monkeypatch: pytest.MonkeyPatch,
     http_url: str,
     ws_url: str,
-    deployed_contracts: ForgeDeployment,
+    deployed_contracts: Deployment,
 ) -> None:
     to_thread_calls: list[object] = []
 
@@ -502,7 +502,7 @@ async def test_watch_fetch_logs_called_via_to_thread(
         if callable(func):
             return func(*args, **kwargs)  # type: ignore[operator]
 
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     monkeypatch.setattr(watcher_module, "AsyncWeb3", FakeAsyncWeb3)
     monkeypatch.setattr(watcher, "fetch_logs", fake_fetch_logs)
     monkeypatch.setattr(watcher, "_current_head", lambda: 0)
@@ -519,7 +519,7 @@ async def test_watch_fetch_logs_called_via_to_thread(
     assert fake_fetch_logs in to_thread_calls
 
 
-async def test_watch_populates_store(w3: Web3, http_url: str, ws_url: str, deployed_contracts: ForgeDeployment) -> None:
+async def test_watch_populates_store(w3: Web3, http_url: str, ws_url: str, deployed_contracts: Deployment) -> None:
     caller = Account.from_key(_DEPLOYER_KEY)
 
     faucet = w3.eth.contract(address=deployed_contracts.faucet, abi=PLACE_FAUCET_ABI)
@@ -527,9 +527,9 @@ async def test_watch_populates_store(w3: Web3, http_url: str, ws_url: str, deplo
     grid = w3.eth.contract(address=deployed_contracts.grid, abi=PLACE_GRID_ABI)
 
     send_tx(w3, faucet.functions.claim(), _DEPLOYER_KEY)
-    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.rent_price), _DEPLOYER_KEY)
+    send_tx(w3, token.functions.approve(deployed_contracts.grid, deployed_contracts.params.rent_price), _DEPLOYER_KEY)
 
-    watcher = Watcher(http_url=http_url, ws_url=ws_url, contracts=deployed_contracts)
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
     watch_task = asyncio.create_task(watcher.watch())
 
     await asyncio.sleep(0.5)
