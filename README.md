@@ -12,69 +12,72 @@ dev setup when testing the full local topology.
 
 ## Local Backend
 
-Docker Compose runs the backend side of the realistic local stack: Anvil on
-`127.0.0.1:8545` and the watcher API/WebSocket service on `127.0.0.1:8000`.
-The frontend Worker runs separately on `127.0.0.1:8787`, so local browser
-requests still exercise CORS.
+The realistic local stack runs three native processes (no Docker/Compose):
 
-To start just the chain and watcher:
+1. **Anvil** on `127.0.0.1:8545` — started from the contracts repo.
+2. **Watcher** on `127.0.0.1:8000` — started from this repo.
+3. **Frontend Worker** on `127.0.0.1:8787` — started from
+   `../polyplace-frontend` via `npm run worker:dev`.
+
+### Quick start (deterministic defaults)
+
+For a throwaway chain where you don't care about the deployed addresses,
+the watcher defaults to the deterministic addresses produced by a fresh
+Anvil using the default Foundry mnemonic.
 
 ```sh
-podman compose up anvil watcher
+# Terminal 1 — start anvil in the contracts repo
+cd ../polyplace-contracts
+just anvil
+
+# Terminal 2 — start the watcher
+just watcher
 ```
 
-Compose includes deterministic contract address defaults for a fresh Anvil
-deployment. To deploy contracts yourself and have the watcher use the
-resulting addresses, run the deploy CLI from the
-[`polyplace-contracts`](../polyplace-contracts) repo and translate its env
-output into `.local/watcher.env`:
+For the full local topology, also start the frontend Worker in a third
+terminal (`npm run worker:dev` from `../polyplace-frontend`).
 
-1. Start Anvil:
+### Custom deployment
+
+If you want to deploy your own contracts and use the resulting addresses:
+
+1. **Start anvil** in the contracts repo:
 
    ```sh
-   just local-chain
+   cd ../polyplace-contracts
+   just anvil
    ```
 
-2. In `polyplace-contracts/packages/python` (where the `polyplace-deploy`
-   entry point is registered), run the deploy CLI against the host Anvil
-   and capture the env block:
+2. **Deploy contracts** and capture the env block:
 
    ```sh
-   cd ../polyplace-contracts/packages/python
-   uv run polyplace-deploy \
-     --rpc-url http://127.0.0.1:8545 \
-     --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-     --env-out -
+   cd ../polyplace-contracts
+   just deploy-local
    ```
 
-3. Translate the printed `POLYPLACE_*` vars into `.local/watcher.env` —
-   `POLYPLACE_GRID_ADDRESS` becomes `GRID_ADDRESS`, `POLYPLACE_TOKEN_ADDRESS`
-   becomes `TOKEN_ADDRESS`, `POLYPLACE_FAUCET_ADDRESS` becomes
-   `FAUCET_ADDRESS`, `POLYPLACE_START_BLOCK` becomes `START_BLOCK`, and add
-   `WEB3_HTTP_URL`, `WEB3_WS_URL`, `CORS_ORIGINS` by hand. Example:
+   This prints `POLYPLACE_GRID_ADDRESS=0x...`, `POLYPLACE_START_BLOCK=...`,
+   etc. to stdout.
+
+3. **Start the watcher** in this repo, passing the deployed addresses:
 
    ```sh
-   cat > .local/watcher.env <<EOF
-   WEB3_HTTP_URL=http://anvil:8545
-   WEB3_WS_URL=ws://anvil:8545
-   START_BLOCK=<value of POLYPLACE_START_BLOCK>
-   GRID_ADDRESS=0x...
-   TOKEN_ADDRESS=0x...
-   FAUCET_ADDRESS=0x...
-   CORS_ORIGINS=http://127.0.0.1:8787,http://localhost:8787
-   EOF
-   ```
-
-4. Start the watcher, which uses `.local/watcher.env` as a Compose env
-   override when present and connects to Anvil through the Compose service
-   name (`http://anvil:8545` / `ws://anvil:8545`):
-
-   ```sh
+   export GRID_ADDRESS=0x...          # from deploy-local output
+   export START_BLOCK=...             # from deploy-local output
    just watcher
    ```
 
-The generated `.local/watcher.env` is local runtime state and is ignored by
-git.
+   If you prefer inline env vars:
+
+   ```sh
+   GRID_ADDRESS=0x... START_BLOCK=... just watcher
+   ```
+
+4. **Start the frontend** from `../polyplace-frontend`:
+
+   ```sh
+   cd ../polyplace-frontend
+   npm run worker:dev
+   ```
 
 ## Continuous Integration
 
