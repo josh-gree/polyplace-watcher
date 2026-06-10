@@ -65,7 +65,7 @@ jobs:
           fi
           cat "$health"
           echo
-          jq -e 'has("last_block") and has("last_log_index")' "$health" > /dev/null
+          jq -e 'has("last_block") and has("last_log_index") and .watcher_alive == true' "$health" > /dev/null
           echo "::endgroup::"
 
           echo "::group::GET /grid"

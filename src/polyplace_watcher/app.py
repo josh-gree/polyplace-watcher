@@ -86,6 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     snapshot_task = asyncio.create_task(_snapshot_loop(store, snapshot_path, snapshot_interval))
     app.state.store = store
     app.state.watcher = watcher
+    app.state.watch_task = watch_task
     try:
         yield
     finally:
@@ -111,12 +112,17 @@ app.add_middleware(
 
 
 @app.get("/health")
-async def get_health(request: Request) -> dict[str, int | str | None]:
+async def get_health(request: Request) -> dict[str, int | str | bool | None]:
     store: GridStore = request.app.state.store
+    # The watch loop catches all exceptions and retries forever, so a dead
+    # task means something is badly wrong — surface it instead of serving
+    # stale state behind a green health check.
+    watch_task = getattr(request.app.state, "watch_task", None)
     return {
         "last_block": store.last_block,
         "last_log_index": store.last_log_index,
         "git_sha": GIT_SHA,
+        "watcher_alive": watch_task is not None and not watch_task.done(),
     }
 
 

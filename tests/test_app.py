@@ -245,3 +245,47 @@ async def test_lifespan_saves_snapshot_on_shutdown(
         pass
 
     assert snap_path.exists()
+
+
+async def test_health_reports_watcher_alive(empty_grid_client: AsyncClient) -> None:
+    async def _run_forever() -> None:
+        await asyncio.sleep(60)
+
+    task = asyncio.create_task(_run_forever())
+    app.state.watch_task = task
+    try:
+        async with empty_grid_client as client:
+            response = await client.get("/health")
+        body = response.json()
+        assert body["watcher_alive"] is True
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+async def test_health_reports_dead_watch_task(empty_grid_client: AsyncClient) -> None:
+    """A watch task that has exited — the 2026-05-20 zombie state — must
+    show up in /health instead of hiding behind a 200."""
+
+    async def _dies_immediately() -> None:
+        raise ValueError("boom")
+
+    task = asyncio.create_task(_dies_immediately())
+    with suppress(ValueError):
+        await task
+    app.state.watch_task = task
+
+    async with empty_grid_client as client:
+        response = await client.get("/health")
+    assert response.json()["watcher_alive"] is False
+
+
+async def test_health_tolerates_missing_watch_task(empty_grid_client: AsyncClient) -> None:
+    if hasattr(app.state, "watch_task"):
+        del app.state.watch_task
+    async with empty_grid_client as client:
+        response = await client.get("/health")
+    body = response.json()
+    assert body["watcher_alive"] is False
+    assert body["last_block"] is None
