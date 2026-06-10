@@ -26,6 +26,11 @@ _CELL_RENTED_TOPIC = _event_topic(PLACE_GRID_ABI, "CellRented")
 _CELL_COLOR_UPDATED_TOPIC = _event_topic(PLACE_GRID_ABI, "CellColorUpdated")
 
 
+def _backoff_delay(consecutive_failures: int) -> float:
+    """Exponential reconnect delay: 0.5s, 1s, 2s, … capped at one minute."""
+    return min(0.5 * 2.0 ** (consecutive_failures - 1), 60.0)
+
+
 class Watcher:
     def __init__(
         self,
@@ -46,6 +51,11 @@ class Watcher:
         self._start_block: int = start_block
         self._backfill_chunk_size = backfill_chunk_size
         self._ws_w3: AsyncWeb3 | None = None
+        # Highest block we know to be fully scanned (backfilled or live-
+        # delivered). Reconnect backfills resume here instead of re-scanning
+        # everything since the last *event*, which on a quiet grid can be
+        # millions of blocks of nothing.
+        self._scanned_to: int | None = None
         logger.info(
             "watcher_initialized",
             extra={
@@ -128,10 +138,12 @@ class Watcher:
             )
             for item in chunk:
                 yield item
+            self._scanned_to = chunk_end
             cursor = chunk_end + 1
 
     async def watch(self) -> None:
         connection_attempt = 0
+        consecutive_failures = 0
         while True:
             try:
                 connection_attempt += 1
@@ -162,7 +174,12 @@ class Watcher:
                             "connection_attempt": connection_attempt,
                         },
                     )
-                    from_block = self.store.last_block if self.store.last_block is not None else self._start_block
+                    candidates = [self._start_block]
+                    if self.store.last_block is not None:
+                        candidates.append(self.store.last_block)
+                    if self._scanned_to is not None:
+                        candidates.append(self._scanned_to + 1)
+                    from_block = max(candidates)
                     logger.info(
                         "watcher_backfill_started",
                         extra={
@@ -184,14 +201,19 @@ class Watcher:
                             "last_log_index": self.store.last_log_index,
                         },
                     )
+                    consecutive_failures = 0
                     async for response in w3.socket.process_subscriptions():
                         event = self._decode_log(response["result"])
                         if event is not None:
+                            block = response["result"]["blockNumber"]
                             self.store.apply(
                                 event,
-                                response["result"]["blockNumber"],
+                                block,
                                 response["result"]["logIndex"],
                             )
+                            # block - 1, not block: the same block may hold
+                            # further logs we haven't received yet.
+                            self._scanned_to = max(self._scanned_to or 0, block - 1)
                             logger.debug(
                                 "watcher_live_event_applied",
                                 extra={
@@ -205,15 +227,28 @@ class Watcher:
             except asyncio.CancelledError:
                 logger.info("watcher_cancelled", extra={"component": "watcher"})
                 raise
-            except (ConnectionClosed, PersistentConnectionError) as exc:
+            except Exception as exc:
+                # Catch everything: any exception that escapes this loop kills
+                # the watch task silently (the lifespan only observes it at
+                # shutdown) while /health keeps serving stale state. Expected
+                # WS drops (ConnectionClosed, PersistentConnectionError) and
+                # HTTP RPC failures during backfill all land here and retry.
+                consecutive_failures += 1
+                delay = _backoff_delay(consecutive_failures)
+                expected = isinstance(exc, (ConnectionClosed, PersistentConnectionError))
                 logger.warning(
                     "watcher_connection_lost",
                     extra={
                         "component": "watcher",
                         "connection_attempt": connection_attempt,
+                        "consecutive_failures": consecutive_failures,
                         "exception_type": type(exc).__name__,
                         "exception_message": str(exc),
+                        "retry_in_seconds": delay,
                     },
+                    exc_info=not expected,
                 )
+                self._ws_w3 = None
+                await asyncio.sleep(delay)
             finally:
                 self._ws_w3 = None

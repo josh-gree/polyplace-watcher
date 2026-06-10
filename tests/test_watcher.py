@@ -549,3 +549,161 @@ async def test_watch_populates_store(w3: Web3, http_url: str, ws_url: str, deplo
     assert cell is not None
     assert cell.renter == caller.address.lower()
     assert cell.color == RGB(r=255, g=136, b=0)
+
+
+def test_backoff_delay_grows_and_caps() -> None:
+    assert watcher_module._backoff_delay(1) == 0.5
+    assert watcher_module._backoff_delay(2) == 1.0
+    assert watcher_module._backoff_delay(5) == 8.0
+    assert watcher_module._backoff_delay(60) == 60.0
+
+
+async def test_watch_survives_unexpected_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    http_url: str,
+    ws_url: str,
+    deployed_contracts: Deployment,
+) -> None:
+    """A non-WebSocket exception (e.g. an HTTP RPC error during backfill)
+    must trigger a reconnect, not silently kill the watch task.
+
+    This is the 2026-05-20 production incident: an eth_getLogs failure
+    escaped the reconnect loop, which then only caught ConnectionClosed
+    and PersistentConnectionError, and the indexer died unnoticed.
+    """
+    state = {"connection_count": 0}
+
+    class FakeEth:
+        async def subscribe(self, *_args: object, **_kwargs: object) -> None:
+            await asyncio.sleep(0)
+
+    class FakeSocket:
+        def __init__(self, connection_id: int) -> None:
+            self.connection_id = connection_id
+
+        async def process_subscriptions(self):
+            if self.connection_id == 1:
+                raise ValueError("simulated provider blip")
+            yield {"result": {"blockNumber": 7, "logIndex": 0, "cell_id": 3}}
+
+    class FakeAsyncWeb3:
+        eth = FakeEth()
+
+        @staticmethod
+        def WebSocketProvider(url: str) -> str:
+            return url
+
+        def __init__(self, _provider: str) -> None:
+            state["connection_count"] += 1
+            self.socket = FakeSocket(state["connection_count"])
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+    watcher = Watcher(http_url=http_url, ws_url=ws_url, grid_address=deployed_contracts.grid)
+    watcher._decode_log = lambda log: CellColorUpdated(cell_id=log["cell_id"], renter="0xabc", color=0x0000FF)  # type: ignore[method-assign]
+
+    monkeypatch.setattr(watcher_module, "AsyncWeb3", FakeAsyncWeb3)
+    monkeypatch.setattr(watcher_module, "_backoff_delay", lambda _failures: 0.0)
+    monkeypatch.setattr(watcher, "fetch_logs", lambda _f, _t: [])
+    monkeypatch.setattr(watcher, "_current_head", lambda: 0)
+
+    watch_task = asyncio.create_task(watcher.watch())
+    try:
+        for _ in range(30):
+            await asyncio.sleep(0.05)
+            if watcher.store.get(3) is not None:
+                break
+        else:
+            raise AssertionError("watch task did not survive an unexpected exception")
+    finally:
+        watch_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await watch_task
+
+    assert state["connection_count"] >= 2
+
+
+async def test_reconnect_backfill_resumes_from_scanned_to(
+    monkeypatch: pytest.MonkeyPatch,
+    http_url: str,
+    ws_url: str,
+    deployed_contracts: Deployment,
+) -> None:
+    """Reconnect backfills resume from the last scanned block, not the last
+    event block — an idle grid must not be re-scanned from scratch on
+    every reconnect."""
+    from_blocks: list[int] = []
+
+    class FakeEth:
+        async def subscribe(self, *_args: object, **_kwargs: object) -> None:
+            await asyncio.sleep(0)
+
+    class FakeSocket:
+        def __init__(self, connection_id: int) -> None:
+            self.connection_id = connection_id
+
+        async def process_subscriptions(self):
+            if self.connection_id == 1:
+                raise watcher_module.PersistentConnectionError()
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+            return
+            yield  # pragma: no cover - makes this an async generator
+
+    class FakeAsyncWeb3:
+        eth = FakeEth()
+        connection_count = 0
+
+        @staticmethod
+        def WebSocketProvider(url: str) -> str:
+            return url
+
+        def __init__(self, _provider: str) -> None:
+            type(self).connection_count += 1
+            self.socket = FakeSocket(type(self).connection_count)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+    watcher = Watcher(
+        http_url=http_url,
+        ws_url=ws_url,
+        grid_address=deployed_contracts.grid,
+        start_block=50,
+    )
+
+    def fetch_logs(from_block: int, _to_block: int) -> list:
+        from_blocks.append(from_block)
+        return []
+
+    monkeypatch.setattr(watcher_module, "AsyncWeb3", FakeAsyncWeb3)
+    monkeypatch.setattr(watcher_module, "_backoff_delay", lambda _failures: 0.0)
+    monkeypatch.setattr(watcher, "fetch_logs", fetch_logs)
+    monkeypatch.setattr(watcher, "_current_head", lambda: 25_000)
+
+    watch_task = asyncio.create_task(watcher.watch())
+    try:
+        for _ in range(30):
+            await asyncio.sleep(0.05)
+            if FakeAsyncWeb3.connection_count >= 2:
+                break
+        else:
+            raise AssertionError("reconnect never happened")
+        await asyncio.sleep(0.1)  # give the reconnect's backfill time to run
+    finally:
+        watch_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await watch_task
+
+    # First connection scans 50→25000 in 10k chunks. The reconnect resumes
+    # at scanned_to + 1 = 25001, which is past the head — so it fetches
+    # nothing at all instead of re-scanning 25k blocks from 50.
+    assert from_blocks == [50, 10_050, 20_050]
+    assert watcher._scanned_to == 25_000
