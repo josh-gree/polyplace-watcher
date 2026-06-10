@@ -9,7 +9,11 @@ primary_region = 'lhr'
 [build]
 
 [env]
-  SNAPSHOT_PATH = '/data/snapshot.json'
+  # Snapshot file is per-deployment: the 2026-04-29 Amoy beta (grid
+  # 0x16b6...2e48). A GRID_ADDRESS change must come with a fresh snapshot
+  # path — the app re-saves in-memory state on shutdown, so reusing the old
+  # path would resurrect cells indexed from the previous contract.
+  SNAPSHOT_PATH = '/data/snapshot-amoy-0x16b6.json'
   CORS_ORIGINS = 'https://polyplace-frontend.joshuadouglasgreenhalgh.workers.dev'
 
 [mounts]
