@@ -1,0 +1,31 @@
+---
+title: "Boundary — every channel data crosses (SPEC §3)"
+---
+flowchart LR
+    subgraph chain["Polygon chain — source of truth"]
+        RPC["HTTP RPC<br/>eth_getLogs"]
+        WSS["WS log<br/>subscription"]
+    end
+
+    subgraph watcher["watcher process"]
+        GRID[("in-memory grid<br/>(disposable cache)")]
+    end
+
+    SNAP[("snapshot file<br/>(disposable cache)")]
+    ENV["env vars (§7)"]
+
+    subgraph consumers["consumers"]
+        FE["frontend"]
+        FLY["Fly health check"]
+        OPS["operator"]
+    end
+
+    ENV --> watcher
+    RPC -->|backfill| GRID
+    WSS -->|live events| GRID
+    SNAP -->|load at startup| GRID
+    GRID -->|periodic + on shutdown| SNAP
+    GRID -->|"GET /grid — binary, ETag"| FE
+    GRID -->|"WS /ws — full-cell deltas"| FE
+    watcher -->|"GET /health"| FLY
+    watcher -->|structured logs| OPS

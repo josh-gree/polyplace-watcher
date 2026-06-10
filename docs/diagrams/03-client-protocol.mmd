@@ -1,0 +1,21 @@
+---
+title: "Client protocol — subscribe, fetch, apply ⇒ converge (SPEC §5)"
+---
+sequenceDiagram
+    participant C as chain
+    participant W as watcher
+    participant F as frontend
+
+    F->>W: 1. subscribe WS /ws
+    F->>W: 2. GET /grid
+
+    C-->>W: event e1 (cell 42)
+    W-->>F: delta e1 — full cell state
+    Note over F: arrives before the grid —<br/>held or applied, either is fine
+
+    W->>F: grid bytes (already include e1)
+    Note over F: re-applying e1 is harmless:<br/>the delta EQUALS cell 42's state at head
+
+    C-->>W: event e2 (cell 7)
+    W-->>F: delta e2 — full cell state
+    Note over F: converged — every cell now byte-for-byte<br/>what /grid would return
