@@ -1,0 +1,21 @@
+---
+title: "The backfill/live seam — double delivery is safe (SPEC §2, §4)"
+---
+sequenceDiagram
+    participant C as chain
+    participant W as watcher
+
+    W->>C: subscribe WS (BEFORE backfill — no gap possible)
+
+    rect rgb(235, 244, 255)
+        Note over W: backfill phase
+        W->>C: eth_getLogs [from .. head]
+        C-->>W: event e (block b) — via backfill
+        Note over W: apply e
+        C-->>W: event e (block b) — via WS, queued
+    end
+
+    rect rgb(235, 255, 238)
+        Note over W: live phase — drain queue, then tail
+        Note over W: apply e AGAIN — harmless:<br/>events are per-field overwrites,<br/>replaying an in-order suffix converges (§2)
+    end

@@ -1,0 +1,15 @@
+---
+title: "Lifecycle (SPEC §4) — /grid, /ws, /health serve throughout; checkpoint every 60s"
+---
+flowchart LR
+    START([process<br/>start]) --> LOAD["load snapshot,<br/>if one exists"]
+    LOAD --> CONNECT["connect chain WS<br/>+ subscribe<br/>(events queue from here)"]
+    CONNECT --> BF["backfill from checkpoint:<br/>max(START_BLOCK,<br/>snapshot.last_block,<br/>scanned_to + 1)"]
+    BF -->|caught up<br/>to head| LIVE["live tail:<br/>apply each event,<br/>broadcast delta"]
+
+    CONNECT -.->|error| WAIT
+    BF -.->|error| WAIT
+    LIVE -.->|error| WAIT["backoff — bounded,<br/>the loop never dies"]
+    WAIT -.->|reconnect| CONNECT
+
+    SIG([shutdown signal,<br/>in any state]) --> SAVE["save snapshot"] --> EXIT([exit])
