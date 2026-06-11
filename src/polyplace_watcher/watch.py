@@ -143,12 +143,32 @@ async def _tail(live: AsyncIterator[dict], store: Store) -> None:
 
 async def checkpoint(config: Config, store: Store) -> None:
     """Periodically write the snapshot if the grid changed (SPEC §4). Like
-    the watch loop, only cancellation stops it."""
+    the watch loop, only cancellation stops it.
+
+    The JSON build + write runs in a worker thread — at full-grid size it is
+    ~0.5s of work that would otherwise freeze the loop every cycle. The
+    cells/watermark capture and the flag clear happen synchronously before
+    the await, so the captured pair is consistent and any event applied
+    during the write re-marks the store for the next cycle.
+    """
     while True:
         await asyncio.sleep(CHECKPOINT_SECONDS)
+        if not store.changed_since_save:
+            continue
+        snapshot = Grid()
+        snapshot.cells = dict(store.grid.cells)
+        last_block, last_log_index = store.last_block, store.last_log_index
+        store.changed_since_save = False
         try:
-            save_if_changed(config, store)
+            await asyncio.to_thread(
+                save_snapshot, config.snapshot_path, snapshot, last_block, last_log_index
+            )
+            log.info(
+                "snapshot_saved",
+                extra={"path": str(config.snapshot_path), "last_block": last_block},
+            )
         except Exception:
+            store.changed_since_save = True  # nothing was saved; retry next cycle
             log.warning("snapshot_save_failed", exc_info=True)
 
 

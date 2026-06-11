@@ -37,21 +37,30 @@ RENTAL = struct.Struct("<HBII")  # cell_id low u16 / high u8, expires u32, rente
 
 
 def encode_grid(grid: Grid) -> bytes:
-    cells = sorted(grid.cells.items())
-    rented = [(cell_id, cell) for cell_id, cell in cells if cell.renter is not None]
-    colored = [(cell_id, cell) for cell_id, cell in cells if cell.color is not None]
+    # One read per Cell field, snapshotted into rows up front: the encoder
+    # may run in a worker thread while the watch task mutates Cells. Field
+    # reads at distinct times could otherwise disagree (e.g. a renter that
+    # changes between building the renter table and packing the rental
+    # records — a KeyError). Snapshotted, a concurrent event makes the
+    # output merely stale, which SPEC §5 permits.
+    rows = [
+        (cell_id, cell.renter, cell.expires_at, cell.color)
+        for cell_id, cell in sorted(grid.cells.items())
+    ]
+    rented = [(cell_id, renter, expires_at) for cell_id, renter, expires_at, _ in rows if renter is not None]
+    colored = [(cell_id, color) for cell_id, _, _, color in rows if color is not None]
 
     # Canonical renter-table order: first appearance, scanning cells in
     # ascending cell_id (SPEC §5).
     renter_index: dict[str, int] = {}
-    for _, cell in rented:
-        renter_index.setdefault(cell.renter, len(renter_index))
+    for _, renter, _ in rented:
+        renter_index.setdefault(renter, len(renter_index))
 
     bitmap = bytearray(BITMAP_SIZE)
     rgb = bytearray()
-    for cell_id, cell in colored:
+    for cell_id, color in colored:
         bitmap[cell_id >> 3] |= 1 << (cell_id & 7)
-        rgb.extend(cell.color)
+        rgb.extend(color)
 
     meta_offset = 4 + HEADER.size + 20 * len(renter_index) + BITMAP_SIZE + len(rgb)
     parts = [
@@ -62,8 +71,8 @@ def encode_grid(grid: Grid) -> bytes:
         bytes(rgb),
     ]
     parts += [
-        RENTAL.pack(cell_id & 0xFFFF, cell_id >> 16, cell.expires_at or 0, renter_index[cell.renter])
-        for cell_id, cell in rented
+        RENTAL.pack(cell_id & 0xFFFF, cell_id >> 16, expires_at or 0, renter_index[renter])
+        for cell_id, renter, expires_at in rented
     ]
     return b"".join(parts)
 
