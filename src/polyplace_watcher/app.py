@@ -63,6 +63,7 @@ async def lifespan(app: FastAPI):
 
     app.state.config = config
     app.state.store = store
+    app.state.grid_cache = (None, b"")  # (etag, gzipped body) of the last /grid encode
     # The API serves from this moment, mid-backfill included — no readiness
     # gate, by design (SPEC §4, decision D4).
     app.state.watch_task = asyncio.create_task(watch(config, store))
@@ -116,7 +117,14 @@ async def grid(request: Request) -> Response:
     etag = f'"{store.last_block or 0}-{store.last_log_index or 0}"'
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers={"etag": etag, "cache-control": "no-cache"})
-    body = gzip.compress(encode_grid(store.grid))
+    # Encode at most once per grid state change, not once per request: the
+    # grid changes at chain speed but is read at user speed, and a full-grid
+    # encode+gzip stalls the event loop for ~1s. No await separates the
+    # watermark read from the cache store, so check-then-act is atomic here.
+    cached_etag, body = request.app.state.grid_cache
+    if cached_etag != etag:
+        body = gzip.compress(encode_grid(store.grid))
+        request.app.state.grid_cache = (etag, body)
     return Response(
         content=body,
         media_type="application/octet-stream",
