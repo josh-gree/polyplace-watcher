@@ -88,8 +88,14 @@ async def watch(config: Config, store: Store) -> None:
             # backfill and live (SPEC §4).
             async with chain.subscribe_logs(config.web3_ws_url, config.grid_address) as live:
                 log.info("chain_subscribed", extra={"ws_url": scrub_url(config.web3_ws_url)})
-                backoff = INITIAL_BACKOFF
                 await _backfill(config, store)
+                # Reset only after backfill completes, not on subscribe
+                # success: the subscribe can succeed every lap while the
+                # HTTP backfill 429s, and resetting there pins the backoff
+                # at its floor — hammering the struggling RPC that §4 says
+                # we must back off from (observed live as an Infura 429
+                # livelock; scanned_to still ratchets across failed laps).
+                backoff = INITIAL_BACKOFF
                 await _tail(live, store)
         except asyncio.CancelledError:
             raise
