@@ -123,7 +123,9 @@ async def grid(request: Request) -> Response:
     # watermark read from the cache store, so check-then-act is atomic here.
     cached_etag, body = request.app.state.grid_cache
     if cached_etag != etag:
-        body = gzip.compress(encode_grid(store.grid))
+        # Level 1: the PLG payload barely compresses better at higher levels
+        # (8.75 vs 8.77 MB on a full grid) and level 9 costs 5x the CPU.
+        body = gzip.compress(encode_grid(store.grid), 1)
         request.app.state.grid_cache = (etag, body)
     return Response(
         content=body,
