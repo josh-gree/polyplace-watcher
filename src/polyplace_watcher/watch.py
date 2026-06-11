@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import AsyncIterator
+from typing import AsyncIterator, Awaitable, Callable, TypeVar
 
 import httpx
 
@@ -108,12 +108,36 @@ async def watch(config: Config, store: Store) -> None:
             backoff = min(backoff * 2, MAX_BACKOFF)
 
 
+T = TypeVar("T")
+
+
+async def _throttled(call: Callable[[], Awaitable[T]]) -> T:
+    """Call an RPC, absorbing 429 push-back in place: sleep and retry the
+    same call with growing pauses rather than tearing down the live
+    subscription and re-paying connect+subscribe to resume. The pause
+    starts fresh on each call, so pacing tracks the provider's actual
+    limit — full speed while it accepts, polite while it objects (SPEC §4:
+    "don't hammer a struggling RPC"). Anything other than a 429 propagates
+    to the watch loop's reconnect-and-backoff path.
+    """
+    pause = INITIAL_BACKOFF
+    while True:
+        try:
+            return await call()
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 429:
+                raise
+            log.info("rpc_throttled", extra={"retry_in_seconds": pause})
+            await asyncio.sleep(pause)
+            pause = min(pause * 2, MAX_BACKOFF)
+
+
 async def _backfill(config: Config, store: Store) -> None:
     """Catch up over HTTP, from the resume point to the current head, in
     chunks. Events past the head are already buffering on the open live
     subscription; the Store watermark absorbs any overlap at the seam."""
     async with httpx.AsyncClient(timeout=30) as http:
-        head = await chain.block_number(http, config.web3_http_url)
+        head = await _throttled(lambda: chain.block_number(http, config.web3_http_url))
         start = max(
             config.start_block,
             store.last_block or 0,  # re-scan the block of the last applied event (SPEC §2, §4)
@@ -122,8 +146,10 @@ async def _backfill(config: Config, store: Store) -> None:
         log.info("backfill_started", extra={"from_block": start, "to_block": head})
         for chunk_start in range(start, head + 1, config.backfill_chunk_size):
             chunk_end = min(chunk_start + config.backfill_chunk_size - 1, head)
-            logs = await chain.get_logs(
-                http, config.web3_http_url, config.grid_address, chunk_start, chunk_end
+            logs = await _throttled(
+                lambda: chain.get_logs(
+                    http, config.web3_http_url, config.grid_address, chunk_start, chunk_end
+                )
             )
             for raw in logs:
                 applied = chain.decode_log(raw)
